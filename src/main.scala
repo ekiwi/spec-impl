@@ -1,5 +1,7 @@
 import chisel3._
 import chisel3.util._
+import firrtl.annotations.JsonProtocol
+import specimpl._
 
 abstract class TestClass extends Module {
   val io = IO(new Bundle {
@@ -47,6 +49,8 @@ object main {
     val ir = chisel3.Driver.elaborate(() => new A)
     val firrtl = chisel3.Driver.emit(ir)
     println(firrtl)
+    val annos = ir.annotations.map(_.toFirrtl)
+    println(JsonProtocol.serialize(annos))
 
     // generate verilog and save to file
     //chisel3.Driver.execute(args, () => new ReferenceGcd(8))
