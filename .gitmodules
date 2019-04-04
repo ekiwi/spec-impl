@@ -1,0 +1,3 @@
+[submodule "uclid"]
+	path = uclid
+	url = git@github.com:uclid-org/uclid.git
