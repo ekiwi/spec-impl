@@ -7,10 +7,12 @@ import chisel3._
 import chisel3.core.{ChiselAnnotation, CompileOptions, RunFirrtlTransform, annotate}
 import chisel3.internal.InstanceId
 import chisel3.internal.sourceinfo.SourceInfo
-import firrtl.{CircuitForm, HighForm, Transform}
-import firrtl.annotations.{Annotation, ModuleName, Named, SingleTargetAnnotation}
-import firrtl.ir.Circuit
+import firrtl._
+import firrtl.ir._
 import firrtl.passes.Pass
+import firrtl.annotations._
+import firrtl.Utils._
+// import firrtl.traversals.Foreachers._
 
 // frontend
 
@@ -23,6 +25,8 @@ object specimpl {
     when((!is_spec).B) {
       block
     }
+    // avoid not fully initialized error
+    wire_mark := is_spec.B
     wire_mark
   }
 }
@@ -60,6 +64,8 @@ case class SpecImplChiselAnnotation(target: InstanceId, is_spec: Boolean, other:
 }
 
 class SpecImplCheck extends Pass {
+  override def inputForm = ChirrtlForm
+  override def outputForm = ChirrtlForm
   override def run(c: Circuit): Circuit = {
     println("TODO: implement SpicImplCheck pass")
     c

@@ -1,5 +1,8 @@
 import chisel3._
+import chisel3.experimental.RunFirrtlTransform
 import chisel3.util._
+import chisel3.internal.firrtl.Circuit
+import firrtl.{ChirrtlForm, Parser, LowFirrtlCompiler, Transform, CircuitState}
 import firrtl.annotations.JsonProtocol
 import specimpl._
 
@@ -52,8 +55,28 @@ object main {
     val annos = ir.annotations.map(_.toFirrtl)
     println(JsonProtocol.serialize(annos))
 
+    println(compile(ir))
+
     // generate verilog and save to file
     //chisel3.Driver.execute(args, () => new ReferenceGcd(8))
     //chisel3.Driver.execute(args, () => new GuardedAtomicActionGcd(8))
+  }
+
+  // adapted from chisel3.Driver.execute and firrtl.Driver.execute
+  def compile(c: Circuit) : String = {
+    val firrtl = Parser.parseString(chisel3.Driver.emit(c), Parser.UseInfo)
+    val transforms = c.annotations
+        .collect { case anno: RunFirrtlTransform => anno.transformClass }
+        .distinct
+        .filterNot(_ == classOf[Transform])
+        .map { transformClass: Class[_ <: Transform] =>
+          transformClass.newInstance()
+        }
+    val compiler = new LowFirrtlCompiler()
+    val annos = c.annotations.map(_.toFirrtl)
+    val res = compiler.compile(CircuitState(firrtl, ChirrtlForm, annos), transforms)
+    //println(res)
+    //res.getEmittedCircuit.value
+    "TODO: how can we get the emitted circuit?"
   }
 }
