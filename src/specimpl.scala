@@ -12,7 +12,6 @@ import firrtl.ir._
 import firrtl.passes.Pass
 import firrtl.annotations._
 import firrtl.Utils._
-// import firrtl.traversals.Foreachers._
 
 // frontend
 
@@ -108,6 +107,8 @@ class SpecImplCheck extends Transform {
       for(s <- stmts) {
         if(get_next_conditional) {
           val when = s.asInstanceOf[Conditionally]
+          println(s"when.pred: ${when.pred}")
+          println(s"when.alt: ${when.alt}")
           return Some(when.conseq)
         }
         val is_needle = s match {
@@ -127,17 +128,28 @@ class SpecImplCheck extends Transform {
     visitStatement(module.body).get
   }
 
+  def validateBlock(name: String, block: Statement) = {
+    println(s"validate $name")
+    println(block)
+    block
+  }
+
+  def makeModule() = {
+
+  }
+
   def verify(modules: Map[String, firrtl.ir.Module], pair: SpecImplPair) = {
     val mod = modules(pair.m)
-    val spec = findBlock(mod, pair.spec_wire)
-    val impl = findBlock(mod, pair.impl_wire)
+    val spec = validateBlock("spec", findBlock(mod, pair.spec_wire))
+    val impl = validateBlock("impl", findBlock(mod, pair.impl_wire))
 
 
+    /*
     println("Spec")
     println(spec.serialize)
     println()
     println("Impl")
     println(impl.serialize)
-
+*/
   }
 }
