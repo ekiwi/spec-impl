@@ -3,9 +3,12 @@
 
 package specimpl
 
+import scala.collection.mutable
+
 import firrtl._
 import firrtl.ir._
 import firrtl.annotations._
+import firrtl.Mappers._
 
 case class SpecImplAnnotation(target: ComponentName, is_spec: Boolean, other: Option[ComponentName]) extends SingleTargetAnnotation[ComponentName] {
   def duplicate(n: ComponentName): SpecImplAnnotation = this.copy(target = n)
@@ -17,6 +20,7 @@ class SpecImplCheck extends Transform {
   private val form = HighForm
   override def inputForm = form
   override def outputForm = form
+  override def name = "Spec/Impl Block Verification"
   override def execute(state: CircuitState): CircuitState = {
     val annos = state.annotations.collect{ case a: SpecImplAnnotation => a}
     if(annos.length > 0) {
@@ -75,20 +79,51 @@ class SpecImplCheck extends Transform {
     visitStatement(module.body).get
   }
 
-  def validateBlock(name: String, block: Statement) = {
-    println(s"validate $name")
-    println(block)
-    block
-  }
+  def makeModule(root: Statement) = {
+    // TODO: change to Map[String,Expression] and include original WRef/... nodes
+    val internally_defined = mutable.Set[String]()
+    val inputs = mutable.Set[String]()
+    val outputs = mutable.Set[String]()
+    def onUse(name: String) : Unit = {
+      if(!internally_defined.contains(name)) {
+        inputs += name
+      }
+    }
+    def onExpr(expr: Expression): Expression = {
+      expr match {
+        case field : WSubField => onUse(field.serialize); field
+        case field : WSubAccess => onUse(field.serialize); field
+        case field : WSubIndex => onUse(field.serialize); field
+        case ref : WRef => onUse(ref.name); ref
+        case other => other.map(onExpr)
+      }
+    }
+    def onStmt(stmt: Statement): Statement = {
+      stmt match {
+        case wire: DefWire => internally_defined += wire.name; outputs += wire.name; wire
+        case dd: DefNode => internally_defined += dd.name; dd
+        case con : Connect => outputs += con.loc.serialize; inputs += con.loc.serialize; con
+        case inst: WDefInstance => throw new RuntimeException(s"Module instantiations are not supported yet! $inst")
+        case reg: DefRegister => throw new RuntimeException(s"Internal registers are not supported yet! $reg")
+        case mem: DefMemory => throw new RuntimeException(s"Internal memory is not supported yet! $mem")
+        case _ : Attach => throw new RuntimeException("Attach not supported")
+        case _ : PartialConnect => throw new RuntimeException("PartialConnect not supported")
+        case other => other
+      }
+      stmt.map(onStmt).map(onExpr)
+    }
 
-  def makeModule() = {
+    onStmt(root)
+    println(s"Inputs: $inputs")
+    println(s"Outputs: $outputs")
 
+    root
   }
 
   def verify(modules: Map[String, firrtl.ir.Module], pair: SpecImplPair) = {
     val mod = modules(pair.m)
-    val spec = validateBlock("spec", findBlock(mod, pair.spec_wire))
-    val impl = validateBlock("impl", findBlock(mod, pair.impl_wire))
+    val spec = makeModule(findBlock(mod, pair.spec_wire))
+    //val impl = validateBlock("impl", findBlock(mod, pair.impl_wire))
 
 
     /*
