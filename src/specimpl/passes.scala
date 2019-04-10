@@ -3,8 +3,9 @@
 
 package specimpl
 
-import scala.collection.mutable
+import java.util.EmptyStackException
 
+import scala.collection.mutable
 import firrtl._
 import firrtl.ir._
 import firrtl.annotations._
@@ -79,30 +80,58 @@ class SpecImplCheck extends Transform {
     visitStatement(module.body).get
   }
 
-  def makeModule(root: Statement) = {
+  def makeModule(name: String, root: Statement) = {
+    val bool_t = UIntType(IntWidth(1))
     // TODO: change to Map[String,Expression] and include original WRef/... nodes
     val internally_defined = mutable.Set[String]()
-    val inputs = mutable.Set[String]()
-    val outputs = mutable.Set[String]()
-    def onUse(name: String) : Unit = {
+    val inputs = mutable.Map[String,Expression]()
+    val outputs = mutable.Map[String,Type]()
+    // TODO: more reliable name generation
+    def toName(ref: Expression) : String = ref.serialize.replace('.', '_')
+    def onUse(ref: Expression) : Expression = {
+      val name = toName(ref)
       if(!internally_defined.contains(name)) {
-        inputs += name
+        inputs += (name -> ref)
+        WRef(s"io.${name}", ref.tpe, WireKind, UNKNOWNGENDER)
+      } else { ref }
+    }
+    def onDef[T <: Statement with IsDeclaration](dd: T): Statement with IsDeclaration = {
+      val name = dd.name
+      dd match {
+        case wire: DefWire => internally_defined += name; outputs += (name -> wire.tpe)
+        case node: DefNode => internally_defined += name
+      }
+      dd
+    }
+    def onConnect(con: Connect): Statement = {
+      // IMPORTANT: this runs before onExpr!
+      val name = toName(con.loc)
+      if(!internally_defined.contains(name)) {
+        val out = WRef(s"io.${name}_out", con.loc.tpe, WireKind, UNKNOWNGENDER)
+        val en = WRef(s"io.${name}_out_en", bool_t, WireKind, UNKNOWNGENDER)
+        outputs += (name -> out.tpe)
+        Block(Seq(
+          Connect(NoInfo, out, con.expr), Connect(NoInfo, en, UIntLiteral(1))
+        ))
+      } else {
+        throw new RuntimeException("TODO: implement outputs for internally defined Wires, Regs etc....")
+        con
       }
     }
     def onExpr(expr: Expression): Expression = {
       expr match {
-        case field : WSubField => onUse(field.serialize); field
-        case field : WSubAccess => onUse(field.serialize); field
-        case field : WSubIndex => onUse(field.serialize); field
-        case ref : WRef => onUse(ref.name); ref
+        case field : WSubField => onUse(field)
+        case field : WSubAccess => onUse(field)
+        case field : WSubIndex => onUse(field)
+        case ref : WRef => onUse(ref)
         case other => other.map(onExpr)
       }
     }
     def onStmt(stmt: Statement): Statement = {
       stmt match {
-        case wire: DefWire => internally_defined += wire.name; outputs += wire.name; wire
-        case dd: DefNode => internally_defined += dd.name; dd
-        case con : Connect => outputs += con.loc.serialize; inputs += con.loc.serialize; con
+        case wire: DefWire => onDef(wire)
+        case dd: DefNode => onDef(dd)
+        case con : Connect => onConnect(con)
         case inst: WDefInstance => throw new RuntimeException(s"Module instantiations are not supported yet! $inst")
         case reg: DefRegister => throw new RuntimeException(s"Internal registers are not supported yet! $reg")
         case mem: DefMemory => throw new RuntimeException(s"Internal memory is not supported yet! $mem")
@@ -110,19 +139,29 @@ class SpecImplCheck extends Transform {
         case _ : PartialConnect => throw new RuntimeException("PartialConnect not supported")
         case other => other
       }
+      // TODO: actually update statement!
       stmt.map(onStmt).map(onExpr)
     }
+    val body = onStmt(root)
 
-    onStmt(root)
+
+    val io_port = Port(NoInfo, "io", Input, BundleType(
+      inputs.toMap.map { case (name, ref) => Field(name.replace('.', '_'), Default, ref.tpe) }.toSeq ++
+      outputs.toMap.flatMap {case (name, tpe) => Seq(Field(s"${name}_out", Flip, tpe), Field(s"${name}_out_en", Flip, bool_t))}.toSeq
+    ))
+    val clk = Port(NoInfo, "clock", Input, ClockType)
+    val rst = Port(NoInfo, "reset", Input, bool_t)
+
     println(s"Inputs: $inputs")
     println(s"Outputs: $outputs")
 
-    root
+    Module(NoInfo, name, Seq(clk, rst, io_port), body)
   }
 
   def verify(modules: Map[String, firrtl.ir.Module], pair: SpecImplPair) = {
     val mod = modules(pair.m)
-    val spec = makeModule(findBlock(mod, pair.spec_wire))
+    val spec = makeModule("spec", findBlock(mod, pair.spec_wire))
+    println(spec.serialize)
     //val impl = validateBlock("impl", findBlock(mod, pair.impl_wire))
 
 
