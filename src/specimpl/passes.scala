@@ -15,6 +15,7 @@ import firrtl.transforms.BlackBoxSourceHelper
 import java.io._
 
 import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
+import scala.util.matching._
 
 
 
@@ -139,8 +140,16 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     Circuit(NoInfo, Seq(spec, impl, miter), miter.name)
   }
 
+  private def printYosysModel(yosysOut: Seq[String], in: Map[String, Type], out: Map[String, Type]) : Unit = {
+    val signal : Regex = raw"\s+(\d+)\s+\\([a-zA-Z][a-zA-Z0-9_\.]+)\s+(\d+)\s+.+".r
+    val signals = yosysOut.collect{ case signal(time, name, value) => s"$name: $value" }
+    for (line <- signals) {
+      println(line)
+    }
+  }
+
   // based on yosysExpectFailure
-  def yosysCheckCombinatorialEq(testDir: File): Boolean = {
+  private def yosysCheckCombinatorialEq(testDir: File): Tuple2[Boolean, Seq[String]] = {
     val scriptFileName = s"${testDir.getAbsolutePath}/yosys_script"
     val yosysScriptWriter = new PrintWriter(scriptFileName)
     yosysScriptWriter.write(
@@ -152,11 +161,11 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     yosysScriptWriter.close()
 
     val resultFileName = testDir.getAbsolutePath + "/yosys_results"
-    val command = s"yosys -s $scriptFileName" #> new File(resultFileName)
-    val buf = new StringBuffer()
-    val ret = command.!<(ProcessLogger(buf append _))
-    println(s"yopsys returned $ret")
-    ret == 0
+    val command = s"yosys -s $scriptFileName" // #> new File(resultFileName)
+    val buf = mutable.ArrayBuffer.empty[String]
+    val ret = command.!(ProcessLogger(buf += _))
+    //println(s"yopsys returned $ret")
+    (ret == 0, buf.toSeq)
   }
 
   // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
@@ -168,8 +177,13 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     val testDir = createTestDirectory(prefix + "_equivalence_test")
     println(s"Results dir: ${testDir.getAbsolutePath}")
     makeVerilog(testDir, makeMiter(in, out))
-    val success = yosysCheckCombinatorialEq(testDir)
-    println(s"Equivalent? $success")
+    val (success, stdout) = yosysCheckCombinatorialEq(testDir)
+    if(success) {
+      println("✔️ Implementation follows spec!")
+    } else {
+      println("❌ Implementation dows not follow the spec!")
+      printYosysModel(stdout, in, out)
+    }
 
     //val spec_verilog = makeVerilog(testDir, spec)
     //val impl_verilog = makeVerilog(testDir, impl)
