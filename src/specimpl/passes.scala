@@ -3,7 +3,6 @@
 
 package specimpl
 
-import java.util.EmptyStackException
 
 import scala.collection.mutable
 import firrtl._
@@ -11,10 +10,14 @@ import firrtl.ir._
 import firrtl.annotations._
 import firrtl.Mappers._
 import firrtl.util.BackendCompilationUtilities
-import java.io._
-
 import firrtl.CompilerUtils.getLoweringTransforms
 import firrtl.transforms.BlackBoxSourceHelper
+
+
+import java.io._
+import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
+
+
 
 object LHS { def apply() : Gender = FEMALE }
 object RHS { def apply() : Gender = MALE }
@@ -137,6 +140,25 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     Circuit(NoInfo, Seq(spec, impl, miter), miter.name)
   }
 
+  // based on yosysExpectFailure
+  def yosysCheckCombinatorialEq(testDir: File): Boolean = {
+    val scriptFileName = s"${testDir.getAbsolutePath}/yosys_script"
+    val yosysScriptWriter = new PrintWriter(scriptFileName)
+    yosysScriptWriter.write(
+      s"""read_verilog ${testDir.getAbsolutePath}/miter.v
+         |prep; proc; opt; memory; flatten
+         |hierarchy -top miter
+         |sat -verify -show-all -prove trigger 0 -seq 1 miter"""
+          .stripMargin)
+    yosysScriptWriter.close()
+
+    val resultFileName = testDir.getAbsolutePath + "/yosys_results"
+    val command = s"yosys -s $scriptFileName" #> new File(resultFileName)
+    val ret = command.!
+    println(s"yopsys returned $ret")
+    ret == 0
+  }
+
   // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
   def run(prefix: String) = {
     assert(spec.name == "spec")
@@ -144,11 +166,14 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     val (in, out) = getIO()
 
     val testDir = createTestDirectory(prefix + "_equivalence_test")
+    println(s"Results dir: ${testDir.getAbsolutePath}")
     makeVerilog(testDir, makeMiter(in, out))
+    val success = yosysCheckCombinatorialEq(testDir)
+    println(s"Equivalent? $success")
 
     //val spec_verilog = makeVerilog(testDir, spec)
     //val impl_verilog = makeVerilog(testDir, impl)
-    //val success = yosysExpectSuccess(impl_verilog, spec_verilog, testDir, Seq())
+    // val success = yosysExpectSuccess(impl_verilog, spec_verilog, testDir, Seq())
     //println(s"Equivalent? $success")
   }
 }
