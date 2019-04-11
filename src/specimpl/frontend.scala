@@ -1,5 +1,6 @@
-// spec / impl scope implementation
-// author: Kevin Laeufer <laeufer@eecs.berkeley.edu>
+// Copyright 2019 The Regents of the University of California
+// released under BSD 3-Clause License
+// author: Kevin Laeufer <laeufer@cs.berkeley.edu>
 
 package specimpl
 
