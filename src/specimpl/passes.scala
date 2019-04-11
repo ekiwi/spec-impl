@@ -13,11 +13,23 @@ import firrtl.Mappers._
 import firrtl.util.BackendCompilationUtilities
 import java.io._
 
+import firrtl.CompilerUtils.getLoweringTransforms
+import firrtl.transforms.BlackBoxSourceHelper
+
+object LHS { def apply() : Gender = FEMALE }
+object RHS { def apply() : Gender = MALE }
+
 case class SpecImplAnnotation(target: ComponentName, is_spec: Boolean, other: Option[ComponentName]) extends SingleTargetAnnotation[ComponentName] {
   def duplicate(n: ComponentName): SpecImplAnnotation = this.copy(target = n)
 }
 
 case class SpecImplPair(m: String, spec_wire: String, impl_wire: String)
+
+class MinimumFirrtlToVerilogCompiler extends Compiler {
+  def emitter = new VerilogEmitter
+  def transforms: Seq[Transform] = getLoweringTransforms(HighForm, LowForm) ++
+      Seq(new MinimumLowFirrtlOptimization, new BlackBoxSourceHelper)
+}
 
 class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationUtilities {
   private def getModuleIO(m: Module): Tuple2[Map[String, Type], Map[String, Type]] = {
@@ -49,7 +61,7 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     (spec_in, spec_out)
   }
 
-  private val compiler = new MinimumVerilogCompiler
+  private val compiler = new MinimumFirrtlToVerilogCompiler
 
   private def makeVerilog(testDir: File, m: Module): String = {
     val circuit = Circuit(m.info, Seq(m), m.name)
@@ -152,7 +164,7 @@ class SpecImplCheck extends Transform {
       val name = toName(ref)
       if(!internally_defined.contains(name)) {
         inputs += (name -> ref)
-        WRef(s"io.${name}", ref.tpe, WireKind, UNKNOWNGENDER)
+        WRef(s"io.${name}", ref.tpe, WireKind, RHS())
       } else { ref }
     }
     def onDef[T <: Statement with IsDeclaration](dd: T): Statement with IsDeclaration = {
@@ -167,8 +179,8 @@ class SpecImplCheck extends Transform {
       // IMPORTANT: this runs before onExpr!
       val name = toName(con.loc)
       if(!internally_defined.contains(name)) {
-        val out = WRef(s"io.${name}_out", con.loc.tpe, WireKind, UNKNOWNGENDER)
-        val en = WRef(s"io.${name}_out_en", bool_t, WireKind, UNKNOWNGENDER)
+        val out = WRef(s"io.${name}_out", con.loc.tpe, WireKind, LHS())
+        val en = WRef(s"io.${name}_out_en", bool_t, WireKind, LHS())
         outputs += (name -> out.tpe)
         val expr = con.expr.mapExpr(onExpr)
         Block(Seq(
