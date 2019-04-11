@@ -10,12 +10,44 @@ import firrtl._
 import firrtl.ir._
 import firrtl.annotations._
 import firrtl.Mappers._
+import firrtl.util.BackendCompilationUtilities
 
 case class SpecImplAnnotation(target: ComponentName, is_spec: Boolean, other: Option[ComponentName]) extends SingleTargetAnnotation[ComponentName] {
   def duplicate(n: ComponentName): SpecImplAnnotation = this.copy(target = n)
 }
 
 case class SpecImplPair(m: String, spec_wire: String, impl_wire: String)
+
+class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationUtilities {
+  private def getIO(m: Module): Tuple2[Map[String, Type], Map[String, Type]] = {
+    assert(m.ports.length == 3)
+    assert(m.ports.map(_.name) == Seq("clock", "reset", "io"))
+    val io = m.ports.last
+    assert(io.direction == Input)
+    val fields = io.tpe match {
+      case bundle: BundleType => bundle.fields
+      case _ => throw new RuntimeException(s"Unexpected io type: ${io.tpe}")
+    }
+    (fields.collect{ case Field(name, Default, tpe) => name -> tpe }.toMap,
+        fields.collect{ case Field(name, Flip, tpe) => name -> tpe }.toMap)
+  }
+
+  private def assertMatchingIO(dir: String, spec: Map[String, Type], impl: Map[String, Type]) = {
+    for((name, tpe) <- spec) {
+      assert(impl.contains(name), s"Implementation is missing $dir `$name` from spec.")
+      assert(impl(name) == tpe, s"Type mismatch for $dir `$name`: $tpe vs ${impl(name)}")
+    }
+  }
+
+  // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
+  def run() = {
+    val (spec_in, spec_out) = getIO(spec)
+    val (impl_in, impl_out) = getIO(spec)
+    assertMatchingIO("input", spec_in, impl_in)
+    assertMatchingIO("output", spec_out, impl_out)
+  }
+}
+
 
 class SpecImplCheck extends Transform {
   private val form = HighForm
@@ -59,8 +91,8 @@ class SpecImplCheck extends Transform {
       for(s <- stmts) {
         if(get_next_conditional) {
           val when = s.asInstanceOf[Conditionally]
-          println(s"when.pred: ${when.pred}")
-          println(s"when.alt: ${when.alt}")
+          //println(s"when.pred: ${when.pred}")
+          //println(s"when.alt: ${when.alt}")
           return Some(when.conseq)
         }
         val is_needle = s match {
@@ -110,8 +142,9 @@ class SpecImplCheck extends Transform {
         val out = WRef(s"io.${name}_out", con.loc.tpe, WireKind, UNKNOWNGENDER)
         val en = WRef(s"io.${name}_out_en", bool_t, WireKind, UNKNOWNGENDER)
         outputs += (name -> out.tpe)
+        val expr = con.expr.mapExpr(onExpr)
         Block(Seq(
-          Connect(NoInfo, out, con.expr), Connect(NoInfo, en, UIntLiteral(1))
+          Connect(NoInfo, out, expr), Connect(NoInfo, en, UIntLiteral(1))
         ))
       } else {
         throw new RuntimeException("TODO: implement outputs for internally defined Wires, Regs etc....")
@@ -130,17 +163,15 @@ class SpecImplCheck extends Transform {
     def onStmt(stmt: Statement): Statement = {
       stmt match {
         case wire: DefWire => onDef(wire)
-        case dd: DefNode => onDef(dd)
+        case dd: DefNode => onDef(dd).mapExpr(onExpr)
         case con : Connect => onConnect(con)
         case inst: WDefInstance => throw new RuntimeException(s"Module instantiations are not supported yet! $inst")
         case reg: DefRegister => throw new RuntimeException(s"Internal registers are not supported yet! $reg")
         case mem: DefMemory => throw new RuntimeException(s"Internal memory is not supported yet! $mem")
         case _ : Attach => throw new RuntimeException("Attach not supported")
         case _ : PartialConnect => throw new RuntimeException("PartialConnect not supported")
-        case other => other
+        case other => other.mapStmt(onStmt).mapExpr(onExpr)
       }
-      // TODO: actually update statement!
-      stmt.map(onStmt).map(onExpr)
     }
     val body = onStmt(root)
 
@@ -152,25 +183,20 @@ class SpecImplCheck extends Transform {
     val clk = Port(NoInfo, "clock", Input, ClockType)
     val rst = Port(NoInfo, "reset", Input, bool_t)
 
-    println(s"Inputs: $inputs")
-    println(s"Outputs: $outputs")
+    //println(s"Inputs: $inputs")
+    //println(s"Outputs: $outputs")
 
     Module(NoInfo, name, Seq(clk, rst, io_port), body)
   }
 
   def verify(modules: Map[String, firrtl.ir.Module], pair: SpecImplPair) = {
+    // turn spec and impl scopes into modules
     val mod = modules(pair.m)
     val spec = makeModule("spec", findBlock(mod, pair.spec_wire))
-    println(spec.serialize)
-    //val impl = validateBlock("impl", findBlock(mod, pair.impl_wire))
+    val impl = makeModule("impl", findBlock(mod, pair.impl_wire))
 
-
-    /*
-    println("Spec")
-    println(spec.serialize)
-    println()
-    println("Impl")
-    println(impl.serialize)
-*/
+    // generate verilog from modules
+    val eq = new EquivalenceChecker(spec, impl)
+    eq.run()
   }
 }
