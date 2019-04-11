@@ -65,6 +65,8 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
 
   private def makeVerilog(testDir: File, m: Module): String = {
     val circuit = Circuit(m.info, Seq(m), m.name)
+    println("About to compile the following FIRRTL:")
+    println(circuit.serialize)
     // TODO: preserve annotations somehow ...
     val state = CircuitState(circuit, HighForm, Seq())
     val verilog = compiler.compileAndEmit(state)
@@ -164,7 +166,7 @@ class SpecImplCheck extends Transform {
       val name = toName(ref)
       if(!internally_defined.contains(name)) {
         inputs += (name -> ref)
-        WRef(s"io.${name}", ref.tpe, WireKind, RHS())
+        WSubField(WRef("io"), name)
       } else { ref }
     }
     def onDef[T <: Statement with IsDeclaration](dd: T): Statement with IsDeclaration = {
@@ -179,9 +181,9 @@ class SpecImplCheck extends Transform {
       // IMPORTANT: this runs before onExpr!
       val name = toName(con.loc)
       if(!internally_defined.contains(name)) {
-        val out = WRef(s"io.${name}_out", con.loc.tpe, WireKind, LHS())
-        val en = WRef(s"io.${name}_out_en", bool_t, WireKind, LHS())
-        outputs += (name -> out.tpe)
+        val out = WSubField(WRef("io"), s"${name}_out")
+        val en = WSubField(WRef("io"), s"${name}_out_en")
+        outputs += (name -> con.loc.tpe)
         val expr = con.expr.mapExpr(onExpr)
         Block(Seq(
           Connect(NoInfo, out, expr), Connect(NoInfo, en, UIntLiteral(1))
