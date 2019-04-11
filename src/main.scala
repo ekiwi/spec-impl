@@ -16,7 +16,7 @@ abstract class TestClass extends Module {
   })
 }
 
-class A extends  TestClass {
+class A(correct: Boolean) extends  TestClass {
   io.c := 0.U
   io.status := 0.U
 
@@ -33,7 +33,11 @@ class A extends  TestClass {
   } .impl {
     val is_add = io.ctrl === 0.U
     val is_sub = io.ctrl === 1.U
-    val b = Mux(is_sub, ~io.b, io.b)
+    val b = if(correct) {
+      Mux(is_sub, (~io.b) + 1.U, io.b)
+    } else {
+      Mux(is_sub, ~io.b, io.b)
+    }
     when(is_add || is_sub) {
       io.c := io.a + b
     }
@@ -49,7 +53,7 @@ object main {
   def main(args: Array[String]): Unit = {
     println("Hello World")
     // print firrtl to command line
-    val ir = chisel3.Driver.elaborate(() => new A)
+    val ir = chisel3.Driver.elaborate(() => new A(correct = true))
     val firrtl = chisel3.Driver.emit(ir)
     println(firrtl)
     val annos = ir.annotations.map(_.toFirrtl)
