@@ -11,6 +11,7 @@ import firrtl.ir._
 import firrtl.annotations._
 import firrtl.Mappers._
 import firrtl.util.BackendCompilationUtilities
+import java.io._
 
 case class SpecImplAnnotation(target: ComponentName, is_spec: Boolean, other: Option[ComponentName]) extends SingleTargetAnnotation[ComponentName] {
   def duplicate(n: ComponentName): SpecImplAnnotation = this.copy(target = n)
@@ -19,7 +20,7 @@ case class SpecImplAnnotation(target: ComponentName, is_spec: Boolean, other: Op
 case class SpecImplPair(m: String, spec_wire: String, impl_wire: String)
 
 class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationUtilities {
-  private def getIO(m: Module): Tuple2[Map[String, Type], Map[String, Type]] = {
+  private def getModuleIO(m: Module): Tuple2[Map[String, Type], Map[String, Type]] = {
     assert(m.ports.length == 3)
     assert(m.ports.map(_.name) == Seq("clock", "reset", "io"))
     val io = m.ports.last
@@ -39,12 +40,39 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     }
   }
 
-  // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
-  def run() = {
-    val (spec_in, spec_out) = getIO(spec)
-    val (impl_in, impl_out) = getIO(spec)
+  private def getIO() : Tuple2[Map[String, Type], Map[String, Type]] = {
+    val (spec_in, spec_out) = getModuleIO(spec)
+    val (impl_in, impl_out) = getModuleIO(impl)
     assertMatchingIO("input", spec_in, impl_in)
     assertMatchingIO("output", spec_out, impl_out)
+    // IO is equivalent
+    (spec_in, spec_out)
+  }
+
+  private val compiler = new MinimumVerilogCompiler
+
+  private def makeVerilog(testDir: File, m: Module): String = {
+    val circuit = Circuit(m.info, Seq(m), m.name)
+    // TODO: preserve annotations somehow ...
+    val state = CircuitState(circuit, HighForm, Seq())
+    val verilog = compiler.compileAndEmit(state)
+    val file = new PrintWriter(s"${testDir.getAbsolutePath}/${m.name}.v")
+    file.write(verilog.getEmittedCircuit.value)
+    file.close()
+    m.name
+  }
+
+  // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
+  def run(prefix: String) = {
+    assert(spec.name == "spec")
+    assert(impl.name == "impl")
+    val (in, out) = getIO()
+
+    val testDir = createTestDirectory(prefix + "_equivalence_test")
+    val spec_verilog = makeVerilog(testDir, spec)
+    val impl_verilog = makeVerilog(testDir, impl)
+    val success = yosysExpectSuccess(impl_verilog, spec_verilog, testDir, Seq())
+    println(s"Equivalent? $success")
   }
 }
 
@@ -197,6 +225,7 @@ class SpecImplCheck extends Transform {
 
     // generate verilog from modules
     val eq = new EquivalenceChecker(spec, impl)
-    eq.run()
+    // TODO: make sure that prefix is unique
+    eq.run(mod.name)
   }
 }
