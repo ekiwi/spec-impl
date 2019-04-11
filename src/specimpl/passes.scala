@@ -222,13 +222,21 @@ class SpecImplCheck extends Transform {
       inputs.toMap.map { case (name, ref) => Field(name.replace('.', '_'), Default, ref.tpe) }.toSeq ++
       outputs.toMap.flatMap {case (name, tpe) => Seq(Field(s"${name}_out", Flip, tpe), Field(s"${name}_out_en", Flip, bool_t))}.toSeq
     ))
+
+    val output_inits = Block(
+      outputs.toMap.map { case (name, tpe) => Block(Seq(
+        IsInvalid(NoInfo, WSubField(WRef("io"), s"${name}_out")),                   // outputs are invalid by default
+        Connect(NoInfo, WSubField(WRef("io"), s"${name}_out_en"), UIntLiteral(0)),  // only if this is reconnected to 1 is the output valid
+      )) }.toSeq
+    )
+
     val clk = Port(NoInfo, "clock", Input, ClockType)
     val rst = Port(NoInfo, "reset", Input, bool_t)
 
     //println(s"Inputs: $inputs")
     //println(s"Outputs: $outputs")
 
-    Module(NoInfo, name, Seq(clk, rst, io_port), body)
+    Module(NoInfo, name, Seq(clk, rst, io_port), Block(Seq(output_inits, body)))
   }
 
   def verify(modules: Map[String, firrtl.ir.Module], pair: SpecImplPair) = {
