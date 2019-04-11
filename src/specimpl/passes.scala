@@ -147,8 +147,8 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     }.toMap
 
     val inputs = in.map{ case (name, _) => name -> signals(s"io_${name}") }
-    val spec_out = out.map{ case (name, _) => name -> signals(s"spec.io_${name}") }
-    val impl_out = out.map{ case (name, _) => name -> signals(s"impl.io_${name}") }
+    val spec_out = out.map{ case (name, _) => name -> (signals(s"spec.io_${name}"), signals(s"spec.io_${name}_en")) }
+    val impl_out = out.map{ case (name, _) => name -> (signals(s"impl.io_${name}"), signals(s"impl.io_${name}_en")) }
     val same = spec_out.filter{ case (name, value) => impl_out(name) == value }.keys.toSeq
     val diff = spec_out.filter{ case (name, value) => impl_out(name) != value }.keys.toSeq
 
@@ -156,11 +156,21 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     println("Inputs:")
     inputs.foreach{ case (name, value) => println(s"${n(name)}: $value") }
     println("Disagreeing Outputs:")
-    diff.foreach { case name =>
-      println(s"${n(name)}:"); println(s"\tspec: ${spec_out(name)}"); println(s"\timpl: ${impl_out(name)}")
+    for(name <- diff) {
+      val (spec_val, spec_en) = spec_out(name)
+      val (impl_val, impl_en) = impl_out(name)
+      println(s"${n(name)}:")
+      if(spec_en != impl_en) {
+        println(s"\tspec: updates? $spec_en")
+        println(s"\timpl: updates? $impl_en")
+      } else {
+        assert(spec_en == 1)
+        println(s"\tspec: $spec_val")
+        println(s"\timpl: $impl_val")
+      }
     }
-    //println()
-    // TODO: show other outputs
+    println("Other Outputs:")
+    same.foreach{ case name => println(s"${n(name)}: ${spec_out(name)}") }
   }
 
   // based on yosysExpectFailure
