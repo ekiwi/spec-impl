@@ -41,8 +41,11 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
       case bundle: BundleType => bundle.fields
       case _ => throw new RuntimeException(s"Unexpected io type: ${io.tpe}")
     }
-    (fields.collect{ case Field(name, Default, tpe) => name -> tpe }.toMap,
-        fields.collect{ case Field(name, Flip, tpe) => name -> tpe }.toMap)
+    val inputs = fields.collect{ case Field(name, Default, tpe) => name -> tpe }.toMap
+    val outputs = fields.collect{ case Field(name, Flip, tpe) => name -> tpe }
+    val outputs_without_en = outputs.filter{ case (name, _) => !name.endsWith("_en")}.toMap
+    assert(outputs.size == outputs_without_en.size * 2)
+    (inputs, outputs_without_en)
   }
 
   private def assertMatchingIO(dir: String, spec: Map[String, Type], impl: Map[String, Type]) = {
@@ -63,17 +66,75 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
 
   private val compiler = new MinimumFirrtlToVerilogCompiler
 
-  private def makeVerilog(testDir: File, m: Module): String = {
-    val circuit = Circuit(m.info, Seq(m), m.name)
+  private def makeVerilog(testDir: File, circuit: Circuit): String = {
     println("About to compile the following FIRRTL:")
     println(circuit.serialize)
     // TODO: preserve annotations somehow ...
     val state = CircuitState(circuit, HighForm, Seq())
     val verilog = compiler.compileAndEmit(state)
-    val file = new PrintWriter(s"${testDir.getAbsolutePath}/${m.name}.v")
+    val file = new PrintWriter(s"${testDir.getAbsolutePath}/${circuit.main}.v")
     file.write(verilog.getEmittedCircuit.value)
     file.close()
-    m.name
+    circuit.main
+  }
+
+  private def makeVerilog(testDir: File, m: Module): String = {
+    val circuit = Circuit(m.info, Seq(m), m.name)
+    makeVerilog(testDir, circuit)
+  }
+
+  private def makeMiter(in: Map[String, Type], out: Map[String, Type]) : Circuit = {
+    val bool_t = UIntType(IntWidth(1))
+    val io = WRef("io")
+    val io_port = Port(NoInfo, "io", Input, BundleType(in.map { case (name, tpe) => Field(name, Default, tpe) }.toSeq))
+    val ports = Seq(
+      Port(NoInfo, "clock", Input, ClockType),
+      Port(NoInfo, "reset", Input, bool_t),
+      io_port,
+      Port(NoInfo, "trigger", Output, bool_t)
+    )
+    val trigger = WRef("trigger")
+    def specIO(name: String) = WSubField(WSubField(WRef("spec"), "io"), name)
+    def implIO(name: String) = WSubField(WSubField(WRef("impl"), "io"), name)
+    def updateTrigger(expr: Expression) = {
+      assert(expr.tpe == bool_t)
+      Connect(NoInfo, trigger, DoPrim(PrimOps.Or, Seq(trigger, expr), Seq(), bool_t))
+    }
+    def outNeq(name: String) : Expression = {
+      DoPrim(PrimOps.Neq, Seq(specIO(name), implIO(name)), Seq(), bool_t)
+    }
+    def outEq(name: String) : Expression = {
+      DoPrim(PrimOps.Eq, Seq(specIO(name), implIO(name)), Seq(), bool_t)
+    }
+    def makeInstance(name: String) = {
+      Block(Seq(
+        DefInstance(NoInfo, name, name),
+        Connect(NoInfo, WSubField(WRef(name), "clock"), WRef("clock")),
+        Connect(NoInfo, WSubField(WRef(name), "reset"), WRef("reset"))
+      ))
+    }
+    def Ite(c: Expression, a: Expression, b: Expression) = {
+      assert(a.tpe == b.tpe)
+      Mux(c, a, b, a.tpe)
+    }
+    val triggers : Iterable[Expression] = out.flatMap{ case (name, _) => Seq(
+      outNeq(s"${name}_en"),
+      Ite(specIO(s"${name}_en"), outNeq(name), UIntLiteral(0))
+    )}
+    val trigger_signal : Expression = triggers.reduce( (a,b) => DoPrim(PrimOps.Or, Seq(a,b), Seq(), bool_t))
+    val body = Block(Seq(
+        makeInstance("spec"), makeInstance("impl"),
+        // not triggered by default
+        Connect(NoInfo, trigger, trigger_signal),
+      ) ++
+      // Inputs
+      in.map { case (name, _) => Block(Seq(
+        Connect(NoInfo, specIO(name), WSubField(io, name)),
+        Connect(NoInfo, implIO(name), WSubField(io, name))
+      ))}.toSeq)
+
+    val miter = Module(NoInfo, "miter", ports, body)
+    Circuit(NoInfo, Seq(spec, impl, miter), miter.name)
   }
 
   // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
@@ -83,10 +144,12 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     val (in, out) = getIO()
 
     val testDir = createTestDirectory(prefix + "_equivalence_test")
-    val spec_verilog = makeVerilog(testDir, spec)
-    val impl_verilog = makeVerilog(testDir, impl)
-    val success = yosysExpectSuccess(impl_verilog, spec_verilog, testDir, Seq())
-    println(s"Equivalent? $success")
+    makeVerilog(testDir, makeMiter(in, out))
+
+    //val spec_verilog = makeVerilog(testDir, spec)
+    //val impl_verilog = makeVerilog(testDir, impl)
+    //val success = yosysExpectSuccess(impl_verilog, spec_verilog, testDir, Seq())
+    //println(s"Equivalent? $success")
   }
 }
 
