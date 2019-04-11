@@ -142,10 +142,25 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
 
   private def printYosysModel(yosysOut: Seq[String], in: Map[String, Type], out: Map[String, Type]) : Unit = {
     val signal : Regex = raw"\s+(\d+)\s+\\([a-zA-Z][a-zA-Z0-9_\.]+)\s+(\d+)\s+.+".r
-    val signals = yosysOut.collect{ case signal(time, name, value) => s"$name: $value" }
-    for (line <- signals) {
-      println(line)
+    val signals : Map[String,BigInt] = yosysOut.collect{
+      case signal(time, name, value) => assert(time == "1"); name -> BigInt(value)
+    }.toMap
+
+    val inputs = in.map{ case (name, _) => name -> signals(s"io_${name}") }
+    val spec_out = out.map{ case (name, _) => name -> signals(s"spec.io_${name}") }
+    val impl_out = out.map{ case (name, _) => name -> signals(s"impl.io_${name}") }
+    val same = spec_out.filter{ case (name, value) => impl_out(name) == value }.keys.toSeq
+    val diff = spec_out.filter{ case (name, value) => impl_out(name) != value }.keys.toSeq
+
+    def n(name: String) : String = name.replace('_', '.')
+    println("Inputs:")
+    inputs.foreach{ case (name, value) => println(s"${n(name)}: $value") }
+    println("Disagreeing Outputs:")
+    diff.foreach { case name =>
+      println(s"${n(name)}:"); println(s"\tspec: ${spec_out(name)}"); println(s"\timpl: ${impl_out(name)}")
     }
+    //println()
+    // TODO: show other outputs
   }
 
   // based on yosysExpectFailure
