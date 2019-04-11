@@ -17,6 +17,7 @@ abstract class TestClass extends Module {
 }
 
 class A(correct: Boolean) extends  TestClass {
+  println(s"A(correct = $correct)")
   io.c := 0.U
   io.status := 0.U
 
@@ -52,16 +53,18 @@ object main {
 
   def main(args: Array[String]): Unit = {
     check(() => new A(correct = true))
-    //check(() => new A(correct = false))
+    check(() => new A(correct = false))
   }
 
   def check[T <: RawModule](gen: () => T) = {
+    println
     val ir = chisel3.Driver.elaborate(gen)
-    val firrtl = chisel3.Driver.emit(ir)
-    println(firrtl)
-    val annos = ir.annotations.map(_.toFirrtl)
-    println(JsonProtocol.serialize(annos))
+    //val firrtl = chisel3.Driver.emit(ir)
+    //println(firrtl)
+    //val annos = ir.annotations.map(_.toFirrtl)
+    //println(JsonProtocol.serialize(annos))
     compile(ir)
+    println
   }
 
   // adapted from chisel3.Driver.execute and firrtl.Driver.execute

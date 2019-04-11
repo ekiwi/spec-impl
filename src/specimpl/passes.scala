@@ -12,9 +12,8 @@ import firrtl.Mappers._
 import firrtl.util.BackendCompilationUtilities
 import firrtl.CompilerUtils.getLoweringTransforms
 import firrtl.transforms.BlackBoxSourceHelper
-
-
 import java.io._
+
 import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
 
 
@@ -70,8 +69,8 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
   private val compiler = new MinimumFirrtlToVerilogCompiler
 
   private def makeVerilog(testDir: File, circuit: Circuit): String = {
-    println("About to compile the following FIRRTL:")
-    println(circuit.serialize)
+    //println("About to compile the following FIRRTL:")
+    //println(circuit.serialize)
     // TODO: preserve annotations somehow ...
     val state = CircuitState(circuit, HighForm, Seq())
     val verilog = compiler.compileAndEmit(state)
@@ -154,7 +153,8 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
 
     val resultFileName = testDir.getAbsolutePath + "/yosys_results"
     val command = s"yosys -s $scriptFileName" #> new File(resultFileName)
-    val ret = command.!
+    val buf = new StringBuffer()
+    val ret = command.!<(ProcessLogger(buf append _))
     println(s"yopsys returned $ret")
     ret == 0
   }
@@ -187,7 +187,7 @@ class SpecImplCheck extends Transform {
   override def execute(state: CircuitState): CircuitState = {
     val annos = state.annotations.collect{ case a: SpecImplAnnotation => a}
     if(annos.length > 0) {
-      println("SpecImplCheck pass:")
+      // println("SpecImplCheck pass:")
       // println(state.circuit.serialize)
       val mod_index = state.circuit.modules.collect{ case m: firrtl.ir.Module => m}.map{ m => m.name -> m}.toMap
       val spec_impl_pairs = parseAnnotations(annos)
