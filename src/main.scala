@@ -2,18 +2,25 @@
 // released under BSD 3-Clause License
 // author: Kevin Laeufer <laeufer@cs.berkeley.edu>
 
-import chisel3._
 import chisel3.experimental.{RawModule, RunFirrtlTransform}
-import chisel3.util._
 import chisel3.internal.firrtl.Circuit
 import firrtl.{ChirrtlForm, CircuitState, LowFirrtlCompiler, Parser, Transform}
-
+import examples._
+import specimpl.{NotEquivalentException}
 
 object main {
 
   def main(args: Array[String]): Unit = {
-    check(() => new SimpleALU(correct = true))
-    check(() => new SimpleALU(correct = false))
+    for((gen, correct) <- simple_alu.get_examples) {
+      val got_exception = try {
+        check(gen)
+        false
+      } catch {
+        case e : NotEquivalentException => true
+      }
+      assert(got_exception != correct)
+    }
+
     //check(() => new mf8_alu())
   }
 

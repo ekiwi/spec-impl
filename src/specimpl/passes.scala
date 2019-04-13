@@ -15,6 +15,8 @@ import firrtl.CompilerUtils.getLoweringTransforms
 import firrtl.transforms.BlackBoxSourceHelper
 import java.io._
 
+import firrtl.passes.PassException
+
 import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
 import scala.util.matching._
 
@@ -35,7 +37,11 @@ class MinimumFirrtlToVerilogCompiler extends Compiler {
       Seq(new MinimumLowFirrtlOptimization, new BlackBoxSourceHelper)
 }
 
-class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationUtilities {
+class NotEquivalentException(info: Info, msg: String) extends PassException(
+  s"$info: $msg"
+)
+
+class EquivalenceChecker(info: Info, spec: Module, impl: Module) extends BackendCompilationUtilities {
   private def getModuleIO(m: Module): Tuple2[Map[String, Type], Map[String, Type]] = {
     assert(m.ports.length == 3)
     assert(m.ports.map(_.name) == Seq("clock", "reset", "io"))
@@ -141,11 +147,13 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     Circuit(NoInfo, Seq(spec, impl, miter), miter.name)
   }
 
-  private def printYosysModel(yosysOut: Seq[String], in: Map[String, Type], out: Map[String, Type]) : Unit = {
+  private def yosysModelToString(yosysOut: Seq[String], in: Map[String, Type], out: Map[String, Type]) : String = {
     val signal : Regex = raw"\s+(\d+)\s+\\([a-zA-Z][a-zA-Z0-9_\.]+)\s+(\d+)\s+.+".r
     val signals : Map[String,BigInt] = yosysOut.collect{
       case signal(time, name, value) => assert(time == "1"); name -> BigInt(value)
     }.toMap
+
+    //println(yosysOut)
 
     val inputs = in.map{ case (name, _) => name -> signals(s"io_${name}") }
     val spec_out = out.map{ case (name, _) => name -> (signals(s"spec.io_${name}"), signals(s"spec.io_${name}_en")) }
@@ -154,24 +162,26 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     val diff = spec_out.filter{ case (name, value) => impl_out(name) != value }.keys.toSeq
 
     def n(name: String) : String = name.replace('_', '.')
-    println("Inputs:")
-    inputs.foreach{ case (name, value) => println(s"${n(name)}: $value") }
-    println("Disagreeing Outputs:")
+    val out_str = new StringBuffer
+    out_str.append("Inputs:\n")
+    inputs.foreach{ case (name, value) => out_str.append(s"${n(name)}: $value\n") }
+    out_str.append("Disagreeing Outputs:\n")
     for(name <- diff) {
       val (spec_val, spec_en) = spec_out(name)
       val (impl_val, impl_en) = impl_out(name)
-      println(s"${n(name)}:")
+      out_str.append(s"${n(name)}:\n")
       if(spec_en != impl_en) {
-        println(s"\tspec: updates? $spec_en")
-        println(s"\timpl: updates? $impl_en")
+        out_str.append(s"\tspec: updates? $spec_en\n")
+        out_str.append(s"\timpl: updates? $impl_en\n")
       } else {
         assert(spec_en == 1)
-        println(s"\tspec: $spec_val")
-        println(s"\timpl: $impl_val")
+        out_str.append(s"\tspec: $spec_val\n")
+        out_str.append(s"\timpl: $impl_val\n")
       }
     }
-    println("Other Outputs:")
-    same.foreach{ case name => println(s"${n(name)}: ${spec_out(name)}") }
+    out_str.append("Other Outputs:\n")
+    same.foreach{ case name => out_str.append(s"${n(name)}: ${spec_out(name)}\n") }
+    out_str.toString
   }
 
   // based on yosysExpectFailure
@@ -189,7 +199,8 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
     val resultFileName = testDir.getAbsolutePath + "/yosys_results"
     val command = s"yosys -s $scriptFileName" // #> new File(resultFileName)
     val buf = mutable.ArrayBuffer.empty[String]
-    val ret = command.!(ProcessLogger(buf += _))
+    val logger = ProcessLogger({a => buf += a}, _ => ())
+    val ret = command.!(logger)
     //println(s"yopsys returned $ret")
     (ret == 0, buf.toSeq)
   }
@@ -208,7 +219,10 @@ class EquivalenceChecker(spec: Module, impl: Module) extends BackendCompilationU
       println("✔️ Implementation follows spec!")
     } else {
       println("❌ Implementation dows not follow the spec!")
-      printYosysModel(stdout, in, out)
+      val model = yosysModelToString(stdout, in, out)
+      println(model)
+      val msg = "Implementation dows not follow the spec!\n" + model
+      throw new NotEquivalentException(info, msg)
     }
 
     //val spec_verilog = makeVerilog(testDir, spec)
@@ -374,7 +388,7 @@ class SpecImplCheck extends Transform {
     val impl = makeModule("impl", findBlock(mod, pair.impl_wire))
 
     // generate verilog from modules
-    val eq = new EquivalenceChecker(spec, impl)
+    val eq = new EquivalenceChecker(mod.info, spec, impl)
     // TODO: make sure that prefix is unique
     eq.run(mod.name)
   }
