@@ -31,17 +31,11 @@ case class SpecImplAnnotation(target: ComponentName, is_spec: Boolean, other: Op
 
 case class SpecImplPair(m: String, spec_wire: String, impl_wire: String)
 
-class MinimumFirrtlToVerilogCompiler extends Compiler {
-  def emitter = new VerilogEmitter
-  def transforms: Seq[Transform] = getLoweringTransforms(HighForm, LowForm) ++
-      Seq(new MinimumLowFirrtlOptimization, new BlackBoxSourceHelper)
-}
-
 class NotEquivalentException(info: Info, msg: String) extends PassException(
   s"$info: $msg"
 )
 
-class EquivalenceChecker(info: Info, spec: Module, impl: Module) extends BackendCompilationUtilities {
+class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module, impl: Module) extends BackendCompilationUtilities {
   private def getModuleIO(m: Module): Tuple2[Map[String, Type], Map[String, Type]] = {
     assert(m.ports.length == 3)
     assert(m.ports.map(_.name) == Seq("clock", "reset", "io"))
@@ -72,25 +66,6 @@ class EquivalenceChecker(info: Info, spec: Module, impl: Module) extends Backend
     assertMatchingIO("output", spec_out, impl_out)
     // IO is equivalent
     (spec_in, spec_out)
-  }
-
-  private val compiler = new MinimumFirrtlToVerilogCompiler
-
-  private def makeVerilog(testDir: File, circuit: Circuit): String = {
-    //println("About to compile the following FIRRTL:")
-    //println(circuit.serialize)
-    // TODO: preserve annotations somehow ...
-    val state = CircuitState(circuit, HighForm, Seq())
-    val verilog = compiler.compileAndEmit(state)
-    val file = new PrintWriter(s"${testDir.getAbsolutePath}/${circuit.main}.v")
-    file.write(verilog.getEmittedCircuit.value)
-    file.close()
-    circuit.main
-  }
-
-  private def makeVerilog(testDir: File, m: Module): String = {
-    val circuit = Circuit(m.info, Seq(m), m.name)
-    makeVerilog(testDir, circuit)
   }
 
   private def makeMiter(in: Map[String, Type], out: Map[String, Type]) : Circuit = {
@@ -147,13 +122,7 @@ class EquivalenceChecker(info: Info, spec: Module, impl: Module) extends Backend
     Circuit(NoInfo, Seq(spec, impl, miter), miter.name)
   }
 
-  private def yosysModelToString(yosysOut: Seq[String], in: Map[String, Type], out: Map[String, Type]) : String = {
-    val signal : Regex = raw"\s+(\d+)\s+\\([a-zA-Z][a-zA-Z0-9_\.]+)\s+(\d+)\s+.+".r
-    val signals : Map[String,BigInt] = yosysOut.collect{
-      case signal(time, name, value) => assert(time == "1"); name -> BigInt(value)
-    }.toMap
-
-    //println(yosysOut)
+  private def parseModel(signals: Map[String, BigInt], in: Map[String, Type], out: Map[String, Type]) : String = {
 
     val inputs = in.map{ case (name, _) => name -> signals(s"io_${name}") }
     val spec_out = out.map{ case (name, _) => name -> (signals(s"spec.io_${name}"), signals(s"spec.io_${name}_en")) }
@@ -184,46 +153,27 @@ class EquivalenceChecker(info: Info, spec: Module, impl: Module) extends Backend
     out_str.toString
   }
 
-  // based on yosysExpectFailure
-  private def yosysCheckCombinatorialEq(testDir: File): Tuple2[Boolean, Seq[String]] = {
-    val scriptFileName = s"${testDir.getAbsolutePath}/yosys_script"
-    val yosysScriptWriter = new PrintWriter(scriptFileName)
-    yosysScriptWriter.write(
-      s"""read_verilog ${testDir.getAbsolutePath}/miter.v
-         |prep; proc; opt; memory; flatten
-         |hierarchy -top miter
-         |sat -verify -show-all -prove trigger 0 -seq 1 miter"""
-          .stripMargin)
-    yosysScriptWriter.close()
-
-    val resultFileName = testDir.getAbsolutePath + "/yosys_results"
-    val command = s"yosys -s $scriptFileName" // #> new File(resultFileName)
-    val buf = mutable.ArrayBuffer.empty[String]
-    val logger = ProcessLogger({a => buf += a}, _ => ())
-    val ret = command.!(logger)
-    //println(s"yopsys returned $ret")
-    (ret == 0, buf.toSeq)
-  }
-
   // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
   def run(prefix: String) = {
     assert(spec.name == "spec")
     assert(impl.name == "impl")
     val (in, out) = getIO()
 
-    val testDir = createTestDirectory(prefix + "_equivalence_test")
-    println(s"Results dir: ${testDir.getAbsolutePath}")
-    makeVerilog(testDir, makeMiter(in, out))
-    val (success, stdout) = yosysCheckCombinatorialEq(testDir)
-    if(success) {
-      println("✔️ Implementation follows spec!")
-    } else {
-      println("❌ Implementation dows not follow the spec!")
-      val model = yosysModelToString(stdout, in, out)
-      println(model)
-      val msg = "Implementation dows not follow the spec!\n" + model
-      throw new NotEquivalentException(info, msg)
+    val miter = makeMiter(in, out)
+    val res = checker.checkCombinatorial(prefix, miter, "trigger")
+    res match {
+      case _ : IsEquivalent => {
+        println("✔️ Implementation follows spec!")
+      }
+      case IsNotEquivalent(model) => {
+        println("❌ Implementation dows not follow the spec!")
+        val model_str = parseModel(model, in, out)
+        println(model_str)
+        val msg = "Implementation dows not follow the spec!\n" + model_str
+        throw new NotEquivalentException(info, msg)
+      }
     }
+
 
     //val spec_verilog = makeVerilog(testDir, spec)
     //val impl_verilog = makeVerilog(testDir, impl)
@@ -388,7 +338,8 @@ class SpecImplCheck extends Transform {
     val impl = makeModule("impl", findBlock(mod, pair.impl_wire))
 
     // generate verilog from modules
-    val eq = new EquivalenceChecker(mod.info, spec, impl)
+    val backend = new YosysChecker
+    val eq = new EquivalenceChecker(backend, mod.info, spec, impl)
     // TODO: make sure that prefix is unique
     eq.run(mod.name)
   }
