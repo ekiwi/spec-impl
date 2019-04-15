@@ -18,7 +18,7 @@ object simple_alu {
   )
 }
 
-class ALUInterface(control_bits: Int, status_bits: Int = 0) extends Bundle {
+class ALUInterface(val control_bits: Int, val status_bits: Int = 0) extends Bundle {
   val a = Input(UInt(8.W))
   val b = Input(UInt(8.W))
   val c = Output(UInt(8.W))
