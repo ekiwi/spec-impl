@@ -52,23 +52,22 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
     (inputs, outputs_without_en)
   }
 
-  private def assertMatchingIO(dir: String, spec: Map[String, Type], impl: Map[String, Type]) = {
+  private def assertMatchingInput(spec: Map[String, Type], impl: Map[String, Type]) = {
     for((name, tpe) <- spec) {
-      assert(impl.contains(name), s"Implementation is missing $dir `$name` from spec.")
-      assert(impl(name) == tpe, s"Type mismatch for $dir `$name`: $tpe vs ${impl(name)}")
+      assert(impl.contains(name), s"Implementation is missing input `$name` from spec.")
+      assert(impl(name) == tpe, s"Type mismatch for input `$name`: $tpe vs ${impl(name)}")
     }
   }
 
-  private def getIO() : Tuple2[Map[String, Type], Map[String, Type]] = {
+  private def getIO() : Tuple3[Map[String, Type], Map[String, Type], Map[String, Type]] = {
     val (spec_in, spec_out) = getModuleIO(spec)
     val (impl_in, impl_out) = getModuleIO(impl)
-    assertMatchingIO("input", spec_in, impl_in)
-    assertMatchingIO("output", spec_out, impl_out)
-    // IO is equivalent
-    (spec_in, spec_out)
+    assertMatchingInput(spec_in, impl_in)
+    // outputs do not have to match since they have the `_en` port which could always be false
+    (spec_in, spec_out, impl_out)
   }
 
-  private def makeMiter(in: Map[String, Type], out: Map[String, Type]) : Circuit = {
+  private def makeMiter(in: Map[String, Type], spec_out: Map[String, Type], impl_out: Map[String, Type]) : Circuit = {
     val bool_t = UIntType(IntWidth(1))
     val io = WRef("io")
     val io_port = Port(NoInfo, "io", Input, BundleType(in.map { case (name, tpe) => Field(name, Default, tpe) }.toSeq))
@@ -102,10 +101,18 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
       assert(a.tpe == b.tpe)
       Mux(c, a, b, a.tpe)
     }
-    val triggers : Iterable[Expression] = out.flatMap{ case (name, _) => Seq(
-      outNeq(s"${name}_en"),
-      Ite(specIO(s"${name}_en"), outNeq(name), UIntLiteral(0))
-    )}
+    def make_trigger(output: String) : Seq[Expression] = {
+      if(spec_out.contains(output) && impl_out.contains(output)) {
+        Seq(
+          outNeq(s"${output}_en"),
+          Ite(specIO(s"${output}_en"), outNeq(output), UIntLiteral(0))
+        )
+      } else {
+        val ref = if(spec_out.contains(output)) { specIO(output+"_en") } else { implIO(output+"_en") }
+        Seq(DoPrim(PrimOps.Eq, Seq(ref, UIntLiteral(0)), Seq(), bool_t))
+      }
+    }
+    val triggers = (spec_out.keys.toSet | impl_out.keys.toSet).flatMap(make_trigger)
     val trigger_signal : Expression = triggers.reduce( (a,b) => DoPrim(PrimOps.Or, Seq(a,b), Seq(), bool_t))
     val body = Block(Seq(
         makeInstance("spec"), makeInstance("impl"),
@@ -122,13 +129,22 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
     Circuit(NoInfo, Seq(spec, impl, miter), miter.name)
   }
 
-  private def parseModel(signals: Map[String, BigInt], in: Map[String, Type], out: Map[String, Type]) : String = {
+  private def parseModel(signals: Map[String, BigInt], in: Map[String, Type], spec_out: Map[String, Type], impl_out: Map[String, Type]) : String = {
 
     val inputs = in.map{ case (name, _) => name -> signals(s"io_${name}") }
-    val spec_out = out.map{ case (name, _) => name -> (signals(s"spec.io_${name}"), signals(s"spec.io_${name}_en")) }
-    val impl_out = out.map{ case (name, _) => name -> (signals(s"impl.io_${name}"), signals(s"impl.io_${name}_en")) }
-    val same = spec_out.filter{ case (name, value) => impl_out(name) == value }.keys.toSeq
-    val diff = spec_out.filter{ case (name, value) => impl_out(name) != value }.keys.toSeq
+    val spec_vals = spec_out.map{ case (name, _) => name -> (signals(s"spec.io_${name}"), signals(s"spec.io_${name}_en")) }
+    val impl_vals = impl_out.map{ case (name, _) => name -> (signals(s"impl.io_${name}"), signals(s"impl.io_${name}_en")) }
+    val names = (spec_out.keys.toSet | impl_out.keys.toSet).toSeq
+    def compare_output(name: String) : Boolean = {
+      if(spec_vals.contains(name) && impl_vals.contains(name)) {
+        spec_vals(name) == impl_vals(name)
+      } else {
+        val en = spec_vals.getOrElse(name, impl_vals(name))._2
+        en == 0
+      }
+    }
+    val same = names.filter(compare_output)
+    val diff = names.filter{!compare_output(_)}
 
     def n(name: String) : String = name.replace('_', '.')
     val out_str = new StringBuffer
@@ -136,16 +152,22 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
     inputs.foreach{ case (name, value) => out_str.append(s"${n(name)}: $value\n") }
     out_str.append("Disagreeing Outputs:\n")
     for(name <- diff) {
-      val (spec_val, spec_en) = spec_out(name)
-      val (impl_val, impl_en) = impl_out(name)
-      out_str.append(s"${n(name)}:\n")
-      if(spec_en != impl_en) {
-        out_str.append(s"\tspec: updates? $spec_en\n")
-        out_str.append(s"\timpl: updates? $impl_en\n")
+      if(spec_vals.contains(name) && impl_vals.contains(name)) {
+        val (spec_val, spec_en) = spec_vals(name)
+        val (impl_val, impl_en) = impl_vals(name)
+        out_str.append(s"${n(name)}:\n")
+        if (spec_en != impl_en) {
+          out_str.append(s"\tspec: updates? ${spec_en != 0}\n")
+          out_str.append(s"\timpl: updates? ${impl_en != 0}\n")
+        } else {
+          assert(spec_en == 1)
+          out_str.append(s"\tspec: $spec_val\n")
+          out_str.append(s"\timpl: $impl_val\n")
+        }
       } else {
-        assert(spec_en == 1)
-        out_str.append(s"\tspec: $spec_val\n")
-        out_str.append(s"\timpl: $impl_val\n")
+        out_str.append(s"${n(name)}:\n")
+        out_str.append(s"\tspec: updates? ${spec_vals.contains(name)}\n")
+        out_str.append(s"\timpl: updates? ${impl_vals.contains(name)}\n")
       }
     }
     out_str.append("Other Outputs:\n")
@@ -157,9 +179,9 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
   def run(prefix: String) = {
     assert(spec.name == "spec")
     assert(impl.name == "impl")
-    val (in, out) = getIO()
+    val (in, spec_out, impl_out) = getIO()
 
-    val miter = makeMiter(in, out)
+    val miter = makeMiter(in, spec_out, impl_out)
     val res = checker.checkCombinatorial(prefix, miter, "trigger")
     res match {
       case _ : IsEquivalent => {
@@ -167,7 +189,7 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
       }
       case IsNotEquivalent(model) => {
         println("❌ Implementation dows not follow the spec!")
-        val model_str = parseModel(model, in, out)
+        val model_str = parseModel(model, in, spec_out, impl_out)
         println(model_str)
         val msg = "Implementation dows not follow the spec!\n" + model_str
         throw new NotEquivalentException(info, msg)
