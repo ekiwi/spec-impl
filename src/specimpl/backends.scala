@@ -13,7 +13,7 @@ import firrtl.CompilerUtils.getLoweringTransforms
 import firrtl.transforms.BlackBoxSourceHelper
 import java.io._
 
-import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
+//import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
 import scala.util.matching._
 
 
@@ -29,6 +29,32 @@ class MinimumFirrtlToVerilogCompiler extends Compiler {
   def emitter = new VerilogEmitter
   def transforms: Seq[Transform] = getLoweringTransforms(HighForm, LowForm) ++
       Seq(new MinimumLowFirrtlOptimization, new BlackBoxSourceHelper)
+}
+
+case class CompletedProcess(returncode: Int, stdout: Seq[String], stderr: Seq[String])
+object runCommand {
+  // there seemed to be a bug where sys.process losses some stdout information,
+  // which is why we reimplement that functionality with Jav primitives
+  def apply(cmd: String, args: Seq[String] = Seq()) : CompletedProcess = {
+    val list = scala.collection.JavaConverters.seqAsJavaList(Seq(cmd) ++ args)
+    val pb = new ProcessBuilder(list)
+    pb.environment.put("PATH", System.getenv("PATH"))
+    val stdout = mutable.ArrayStack[String]()
+    val stderr = mutable.ArrayStack[String]()
+
+    val proc = pb.start()
+    val out_reader = new BufferedReader(new InputStreamReader(proc.getInputStream))
+    val err_reader = new BufferedReader(new InputStreamReader(proc.getErrorStream))
+
+    var s = ""
+    while({ s = out_reader.readLine(); s != null}) { println(s"stdout: $s") ; stdout.push(s) }
+    while({ s = err_reader.readLine(); s != null}) { println(s"stderr: $s") ; stderr.push(s) }
+
+    proc.waitFor()
+    val ret = proc.exitValue()
+
+    CompletedProcess(ret, stdout, stderr)
+  }
 }
 
 class YosysChecker extends CombinatorialChecker with BackendCompilationUtilities {
@@ -61,17 +87,25 @@ class YosysChecker extends CombinatorialChecker with BackendCompilationUtilities
       s"""read_verilog ${testDir.getAbsolutePath}/$module.v
          |prep; proc; opt; memory; flatten
          |hierarchy -top $module
-         |sat -verify -show-all -prove $trigger 0 -seq 1 $module"""
+         |sat -show-all -prove $trigger 0 -seq 1 $module"""
           .stripMargin)
     yosysScriptWriter.close()
 
+    /*
     val resultFileName = testDir.getAbsolutePath + "/yosys_results"
     val command = s"yosys -s $scriptFileName" // #> new File(resultFileName)
     val buf = mutable.ArrayBuffer.empty[String]
     val logger = ProcessLogger({a => buf += a}, _ => ())
     val ret = command.!(logger)
-    //println(s"yopsys returned $ret")
-    (ret == 0, buf.toSeq)
+
+
+    val command2 = s"yosys -s $scriptFileName" #> new File(resultFileName)
+    command2.!
+    */
+
+    Thread.sleep(100)
+    val CompletedProcess(ret, stdout, stderr) = runCommand("yosys", Seq("-s", scriptFileName))
+    (ret == 0, stdout)
   }
 
   def checkCombinatorial(prefix: String, c: Circuit, trigger: String = "trigger") : BackendResult = {
