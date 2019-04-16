@@ -10,11 +10,10 @@ import firrtl.ir._
 import firrtl.util.BackendCompilationUtilities
 import firrtl.CompilerUtils.getLoweringTransforms
 import firrtl.transforms.BlackBoxSourceHelper
-import java.io._
 
-import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
+import java.io._
+import scala.sys.process._
 import scala.util.matching._
-import scala.io.Source
 
 abstract class BackendResult
 case class IsEquivalent() extends BackendResult
