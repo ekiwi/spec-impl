@@ -11,8 +11,8 @@ import specimpl._
 
 object simple_alu {
   def get_examples = Seq(
-    //(() => new CompleteSpec_MissingAdd, false),
-    //(() => new CompleteSpec_Correct, true),
+    (() => new CompleteSpec_MissingAdd, false),
+    (() => new CompleteSpec_Correct, true),
     (() => new IncompleteSpec_AlwaysOutput, false),
     (() => new IncompleteSpec_Correct, true)
   )

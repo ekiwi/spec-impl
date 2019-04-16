@@ -5,7 +5,6 @@
 package specimpl
 
 
-import scala.collection.mutable
 import firrtl._
 import firrtl.ir._
 import firrtl.util.BackendCompilationUtilities
@@ -13,9 +12,9 @@ import firrtl.CompilerUtils.getLoweringTransforms
 import firrtl.transforms.BlackBoxSourceHelper
 import java.io._
 
-//import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
+import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
 import scala.util.matching._
-
+import scala.io.Source
 
 abstract class BackendResult
 case class IsEquivalent() extends BackendResult
@@ -29,32 +28,6 @@ class MinimumFirrtlToVerilogCompiler extends Compiler {
   def emitter = new VerilogEmitter
   def transforms: Seq[Transform] = getLoweringTransforms(HighForm, LowForm) ++
       Seq(new MinimumLowFirrtlOptimization, new BlackBoxSourceHelper)
-}
-
-case class CompletedProcess(returncode: Int, stdout: Seq[String], stderr: Seq[String])
-object runCommand {
-  // there seemed to be a bug where sys.process losses some stdout information,
-  // which is why we reimplement that functionality with Jav primitives
-  def apply(cmd: String, args: Seq[String] = Seq()) : CompletedProcess = {
-    val list = scala.collection.JavaConverters.seqAsJavaList(Seq(cmd) ++ args)
-    val pb = new ProcessBuilder(list)
-    pb.environment.put("PATH", System.getenv("PATH"))
-    val stdout = mutable.ArrayStack[String]()
-    val stderr = mutable.ArrayStack[String]()
-
-    val proc = pb.start()
-    val out_reader = new BufferedReader(new InputStreamReader(proc.getInputStream))
-    val err_reader = new BufferedReader(new InputStreamReader(proc.getErrorStream))
-
-    var s = ""
-    while({ s = out_reader.readLine(); s != null}) { println(s"stdout: $s") ; stdout.push(s) }
-    while({ s = err_reader.readLine(); s != null}) { println(s"stderr: $s") ; stderr.push(s) }
-
-    proc.waitFor()
-    val ret = proc.exitValue()
-
-    CompletedProcess(ret, stdout, stderr)
-  }
 }
 
 class YosysChecker extends CombinatorialChecker with BackendCompilationUtilities {
@@ -72,40 +45,36 @@ class YosysChecker extends CombinatorialChecker with BackendCompilationUtilities
     circuit.main
   }
 
-  private def yosysModel(yosysOut: Seq[String]) : Map[String, BigInt] = {
-    val signal : Regex = raw"\s+(\d+)\s+\\([a-zA-Z][a-zA-Z0-9_\.]+)\s+(\d+)\s+.+".r
-    yosysOut.collect{
-      case signal(time, name, value) => assert(time == "1"); name -> BigInt(value)
+  private def yosysModel(yosysJson: Seq[String]) : Map[String, BigInt] = {
+    val bit_signal   : Regex = "\\s+\\{ \"name\": \"([a-zA-Z][a-zA-Z0-9_\\.]+)\", \"wave\": \"([01])\" \\},?".r
+    val multi_signal : Regex = "\\s+\\{ \"name\": \"([a-zA-Z][a-zA-Z0-9_\\.]+)\", \"wave\": \"=\", \"data\": \\[\"([01]+)\"\\] \\},?".r
+
+    yosysJson.collect {
+      case bit_signal(name, value) => name -> BigInt(value)
+      case multi_signal(name, value) => name -> BigInt(value, 2)
     }.toMap
   }
 
   // based on yosysExpectFailure
   private def yosysCheck(testDir: File, module: String, trigger: String): Tuple2[Boolean, Seq[String]] = {
     val scriptFileName = s"${testDir.getAbsolutePath}/yosys_script"
+    val modelFileName = s"${testDir.getAbsolutePath}/$module.json"
     val yosysScriptWriter = new PrintWriter(scriptFileName)
     yosysScriptWriter.write(
       s"""read_verilog ${testDir.getAbsolutePath}/$module.v
          |prep; proc; opt; memory; flatten
          |hierarchy -top $module
-         |sat -show-all -prove $trigger 0 -seq 1 $module"""
+         |sat -verify -show-all -dump_json $modelFileName -prove $trigger 0 -seq 1 $module"""
           .stripMargin)
     yosysScriptWriter.close()
 
-    /*
+    // execute yosys
     val resultFileName = testDir.getAbsolutePath + "/yosys_results"
-    val command = s"yosys -s $scriptFileName" // #> new File(resultFileName)
-    val buf = mutable.ArrayBuffer.empty[String]
-    val logger = ProcessLogger({a => buf += a}, _ => ())
-    val ret = command.!(logger)
+    val ret = (s"yosys -s $scriptFileName" #> new File(resultFileName)).!
+    val success = ret == 0
+    val model = if(success) { Seq() } else { io.Source.fromFile(modelFileName).getLines.toSeq }
 
-
-    val command2 = s"yosys -s $scriptFileName" #> new File(resultFileName)
-    command2.!
-    */
-
-    Thread.sleep(100)
-    val CompletedProcess(ret, stdout, stderr) = runCommand("yosys", Seq("-s", scriptFileName))
-    (ret == 0, stdout)
+    (success, model)
   }
 
   def checkCombinatorial(prefix: String, c: Circuit, trigger: String = "trigger") : BackendResult = {
