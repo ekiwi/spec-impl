@@ -16,7 +16,10 @@ object simple_alu {
     (() => new IncompleteSpec_AlwaysOutput, false),
     (() => new IncompleteSpec_Correct, true),
     (() => new BufferedOutput_WrongAssign, false),
-    (() => new BufferedOutput_Correct, true)
+    (() => new BufferedOutput_Correct, true),
+    // TODO: reenable
+    //(() => new PipelinedFixedDelay_Correct, true),
+    //(() => new PipelinedFixedDelay_Imbalanced, false),
   )
 }
 
@@ -167,5 +170,50 @@ class BufferedOutput_Correct extends SimpleALUModule {
     val is_sub = io.ctrl === 1.U
     val b = Mux(is_sub, ~io.b + 1.U, io.b)
     c_delay := io.a + b
+  }
+}
+
+class PipelinedFixedDelay_Correct extends SimpleALUModule {
+  override val correct = true
+
+  // TODO: allow spec to directly specify delay (.delay(1))
+  spec {
+    switch(io.ctrl) {
+      is(0.U) {
+        io.c := RegNext(io.a + io.b)
+      }
+      is(1.U) {
+        io.c := RegNext(io.a - io.b)
+      }
+    }
+  } .impl {
+    val is_add = io.ctrl === 0.U
+    val is_sub = io.ctrl === 1.U
+    val b = RegNext(Mux(is_sub, ~io.b + 1.U, io.b))
+    io.c := RegNext(io.a) + b
+  }
+}
+
+class PipelinedFixedDelay_Imbalanced extends SimpleALUModule {
+  override val correct = false
+
+  // TODO: allow spec to directly specify delay (.delay(1))
+  spec {
+    val c_delay = RegInit(0.U(8.W))
+    io.c := c_delay
+    switch(io.ctrl) {
+      is(0.U) {
+        c_delay := io.a + io.b
+      }
+      is(1.U) {
+        c_delay := io.a - io.b
+      }
+    }
+  } .impl {
+    val is_add = io.ctrl === 0.U
+    val is_sub = io.ctrl === 1.U
+    val b = RegNext(Mux(is_sub, ~io.b + 1.U, io.b))
+    // BUG: (skew!) here we are working with a_i and a value derived from b_{i-1}
+    io.c := io.a + b
   }
 }
