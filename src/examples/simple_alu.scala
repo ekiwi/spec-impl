@@ -14,7 +14,9 @@ object simple_alu {
     (() => new CompleteSpec_MissingAdd, false),
     (() => new CompleteSpec_Correct, true),
     (() => new IncompleteSpec_AlwaysOutput, false),
-    (() => new IncompleteSpec_Correct, true)
+    (() => new IncompleteSpec_Correct, true),
+    (() => new BufferedOutput_WrongAssign, false),
+    (() => new BufferedOutput_Correct, true)
   )
 }
 
@@ -116,5 +118,54 @@ class IncompleteSpec_Correct extends SimpleALUModule(2) {
     val b = Mux(is_sub, ~io.b + 1.U, io.b)
     // FIX: only update io.c for ctrl we care about
     when(is_add || is_sub) { io.c := io.a + b }
+  }
+}
+
+class BufferedOutput_WrongAssign extends SimpleALUModule {
+  override val correct = false
+
+  // adding a delay register to the output
+  val c_delay = RegInit(0.U(8.W))
+  io.c := c_delay
+
+  spec {
+    switch(io.ctrl) {
+      is(0.U) {
+        c_delay := io.a + io.b
+      }
+      is(1.U) {
+        // this (for some reason) does not delay subtractions
+        io.c := io.a - io.b
+      }
+    }
+  } .impl {
+    val is_add = io.ctrl === 0.U
+    val is_sub = io.ctrl === 1.U
+    val b = Mux(is_sub, ~io.b + 1.U, io.b)
+    c_delay := io.a + b
+  }
+}
+
+class BufferedOutput_Correct extends SimpleALUModule {
+  override val correct = true
+
+  // adding a delay register to the output
+  val c_delay = RegInit(0.U(8.W))
+  io.c := c_delay
+
+  spec {
+    switch(io.ctrl) {
+      is(0.U) {
+        c_delay := io.a + io.b
+      }
+      is(1.U) {
+        c_delay := io.a - io.b
+      }
+    }
+  } .impl {
+    val is_add = io.ctrl === 0.U
+    val is_sub = io.ctrl === 1.U
+    val b = Mux(is_sub, ~io.b + 1.U, io.b)
+    c_delay := io.a + b
   }
 }
