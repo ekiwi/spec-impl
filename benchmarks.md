@@ -30,4 +30,6 @@ as spec.
 ### Rocket Chip
 * [PMP](https://github.com/freechipsproject/rocket-chip/blob/master/src/main/scala/rocket/PMP.scala)
 * [Decoder](https://github.com/freechipsproject/rocket-chip/blob/master/src/main/scala/rocket/Decode.scala)
-
+* [ALU](https://github.com/freechipsproject/rocket-chip/blob/master/src/main/scala/rocket/ALU.scala) (combinatorial)
+* [AMOALU](https://github.com/freechipsproject/rocket-chip/blob/master/src/main/scala/rocket/AMOALU.scala) (combinatorial)
+* [MulDiv] (https://github.com/freechipsproject/rocket-chip/blob/master/src/main/scala/rocket/Multiplier.scala) (req/ack multi-cycle unit)
