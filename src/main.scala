@@ -11,6 +11,13 @@ import specimpl.{NotEquivalentException}
 object main {
 
   def main(args: Array[String]): Unit = {
+
+    check(() => new serv_alu)
+
+
+    return
+
+
     for((gen, correct) <- simple_alu.get_examples) {
       val got_exception = try {
         check(gen)
