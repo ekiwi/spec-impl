@@ -2,6 +2,9 @@
 // released under BSD 3-Clause License
 // author: Kevin Laeufer <laeufer@cs.berkeley.edu>
 
+
+package examples
+
 import chisel3._
 import chisel3.util._
 import specimpl._
