@@ -120,11 +120,11 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
     Circuit(NoInfo, Seq(spec, impl, miter), miter.name)
   }
 
-  private def parseModel(signals: Map[String, BigInt], in: Map[String, Type], spec_out: Map[String, Type], impl_out: Map[String, Type]) : String = {
+  private def parseModel(spec_name: String, impl_name: String, signals: Map[String, BigInt], in: Map[String, Type], spec_out: Map[String, Type], impl_out: Map[String, Type]) : String = {
 
     val inputs = in.map{ case (name, _) => name -> signals(s"io_${name}") }
-    val spec_vals = spec_out.map{ case (name, _) => name -> (signals(s"spec.io_${name}"), signals(s"spec.io_${name}_en")) }
-    val impl_vals = impl_out.map{ case (name, _) => name -> (signals(s"impl.io_${name}"), signals(s"impl.io_${name}_en")) }
+    val spec_vals = spec_out.map{ case (name, _) => name -> (signals(s"${spec_name}.io_${name}"), signals(s"${spec_name}.io_${name}_en")) }
+    val impl_vals = impl_out.map{ case (name, _) => name -> (signals(s"${impl_name}.io_${name}"), signals(s"${impl_name}.io_${name}_en")) }
     val names = (spec_out.keys.toSet | impl_out.keys.toSet).toSeq
     def compare_output(name: String) : Boolean = {
       if(spec_vals.contains(name) && impl_vals.contains(name)) {
@@ -173,8 +173,6 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
     val (in, spec_out, impl_out) = getIO()
 
     val miter = makeMiter(spec.name, impl.name, in, spec_out, impl_out)
-    println(miter.serialize)
-
 
     val res = checker.checkCombinatorial(prefix, miter, "trigger")
     res match {
@@ -183,18 +181,12 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
       }
       case IsNotEquivalent(model) => {
         println("❌ Implementation dows not follow the spec!")
-        val model_str = parseModel(model, in, spec_out, impl_out)
+        val model_str = parseModel(spec.name, impl.name, model, in, spec_out, impl_out)
         println(model_str)
         val msg = "Implementation dows not follow the spec!\n" + model_str
         throw new NotEquivalentException(info, msg)
       }
     }
-
-
-    //val spec_verilog = makeVerilog(testDir, spec)
-    //val impl_verilog = makeVerilog(testDir, impl)
-    // val success = yosysExpectSuccess(impl_verilog, spec_verilog, testDir, Seq())
-    //println(s"Equivalent? $success")
   }
 }
 
@@ -311,8 +303,8 @@ class SpecImplCheck extends NamedBlockTransform {
     val clk = Port(NoInfo, "clock", Input, ClockType)
     val rst = Port(NoInfo, "reset", Input, bool_t)
 
-    println(s"Inputs: $inputs")
-    println(s"Outputs: $outputs")
+    //println(s"Inputs: $inputs")
+    //println(s"Outputs: $outputs")
 
     Module(NoInfo, name, Seq(clk, rst, io_port), Block(Seq(output_inits, body)))
   }

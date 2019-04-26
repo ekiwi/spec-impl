@@ -4,7 +4,7 @@
 
 import chisel3.experimental.{RawModule, RunFirrtlTransform}
 import chisel3.internal.firrtl.Circuit
-import firrtl.{ChirrtlForm, CircuitState, LowFirrtlCompiler, HighFirrtlCompiler, Parser, Transform}
+import firrtl.{ChirrtlForm, CircuitState, LowFirrtlCompiler, MiddleFirrtlCompiler, Parser, Transform}
 import examples._
 import specimpl.{NotEquivalentException}
 
@@ -48,7 +48,7 @@ object main {
           transformClass.newInstance()
         }
     //val compiler = new LowFirrtlCompiler()
-    val compiler = new HighFirrtlCompiler()
+    val compiler = new MiddleFirrtlCompiler()
     val annos = c.annotations.map(_.toFirrtl)
     val res = compiler.compile(CircuitState(firrtl, ChirrtlForm, annos), transforms)
   }

@@ -146,9 +146,9 @@ class NamedBlockFinder extends Transform {
       case FoundWire(name) => {
         assert(s.isInstanceOf[Connect])
         val con = s.asInstanceOf[Connect]
-        assert(con.loc.isInstanceOf[Reference], s"${con.loc} (${con.serialize})")
+        assert(con.loc.isInstanceOf[WRef], s"${con.loc} (${con.serialize})")
         assert(con.expr.isInstanceOf[UIntLiteral], s"${con.expr} (${con.serialize})")
-        val lhs_name = con.loc.asInstanceOf[Reference].name
+        val lhs_name = con.loc.asInstanceOf[WRef].name
         assert(lhs_name == name)
         val do_include = con.expr.asInstanceOf[UIntLiteral].value == 1
         FoundAssignment(name, do_include)
@@ -156,9 +156,9 @@ class NamedBlockFinder extends Transform {
       case FoundAssignment(name, do_include) => {
         assert(s.isInstanceOf[Conditionally])
         val when = s.asInstanceOf[Conditionally]
-        assert(when.pred.isInstanceOf[Reference])
+        assert(when.pred.isInstanceOf[WRef])
         assert(when.alt.serialize == "skip")
-        val cond_name = when.pred.asInstanceOf[Reference].name
+        val cond_name = when.pred.asInstanceOf[WRef].name
         assert(cond_name == name)
         // we found a block! => find inner blocks and instances
         val (bbs, mods) = subFind(when.conseq)
