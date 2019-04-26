@@ -11,13 +11,10 @@ import specimpl.{NotEquivalentException}
 object main {
 
   def main(args: Array[String]): Unit = {
+    check_examples()
+  }
 
-    check(() => new serv_alu)
-
-
-    return
-
-
+  def check_examples() = {
     for((gen, correct) <- simple_alu.get_examples) {
       val got_exception = try {
         check(gen)
@@ -27,8 +24,10 @@ object main {
       }
       assert(got_exception != correct)
     }
+  }
 
-    //check(() => new mf8_alu())
+  def check_serv_alu() = {
+    check(() => new serv_alu)
   }
 
   def check[T <: RawModule](gen: () => T) = {
