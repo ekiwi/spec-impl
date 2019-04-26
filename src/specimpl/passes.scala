@@ -211,6 +211,7 @@ class SpecImplCheck extends NamedBlockTransform {
     val id_to_block : Map[Int, Seq[NamedBlock]] = meta_blocks.map{
       case (SpecImplId(id), b) => id -> b
       case (SpecImplProblem(id), b) => id -> b
+      case other => throw new RuntimeException(s"unexpected block.meta: ${other}")
     }.groupBy(_._1).map(p => p._1 -> p._2.map(_._2))
     // generate spec impl pairs
     id_to_block.map { case (id, blocks) =>
