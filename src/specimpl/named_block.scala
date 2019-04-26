@@ -51,7 +51,7 @@ case class NamedBlockAnnotation(target: ComponentName, meta: Option[NamedBlockMe
   def duplicate(n: ComponentName): NamedBlockAnnotation = this.copy(target = n)
 }
 
-case class NamedBlock(name: String, when: Conditionally, meta: Option[NamedBlockMetaData] = None, subBlocks: Seq[String] = Seq())
+case class NamedBlock(name: String, module: String, when: Conditionally, visible: Boolean, meta: Option[NamedBlockMetaData] = None, subBlocks: Seq[String] = Seq())
 
 class NamedBlockFinder extends Transform {
   private val form = HighForm
@@ -163,7 +163,7 @@ class NamedBlockFinder extends Transform {
         // we found a block! => find inner blocks and instances
         val (bbs, mods) = subFind(when.conseq)
         val subblocks = bbs.map{ bb => bb.block.name}
-        val bb = NamedBlock(s"$module.$name", when, meta=wires(name).meta, subBlocks=subblocks)
+        val bb = NamedBlock(name, module, when, visible=do_include, meta=wires(name).meta, subBlocks=subblocks)
         blocks = blocks ++ Seq(BlockInst(bb, mods.toSeq))
         Start()
       }

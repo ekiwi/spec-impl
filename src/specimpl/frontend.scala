@@ -52,11 +52,3 @@ case class SpecImplId(id: Int) extends SpecImplMeta
 
 // TODO: add any additional information to this struct
 case class SpecImplProblem(id: Int) extends SpecImplMeta
-
-case class SpecImplChiselAnnotation(target: InstanceId, is_spec: Boolean, other: Option[InstanceId])
-    extends ChiselAnnotation with RunFirrtlTransform {
-  def toFirrtl: SpecImplAnnotation = SpecImplAnnotation(target.toNamed.asInstanceOf[ComponentName],
-    is_spec,
-    other.map(_.toNamed.asInstanceOf[ComponentName]))
-  def transformClass: Class[SpecImplCheck] = classOf[SpecImplCheck]
-}

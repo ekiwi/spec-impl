@@ -11,25 +11,16 @@ import firrtl.ir._
 import firrtl.annotations._
 import firrtl.Mappers._
 import firrtl.util.BackendCompilationUtilities
-import firrtl.CompilerUtils.getLoweringTransforms
-import firrtl.transforms.BlackBoxSourceHelper
-import java.io._
 
 import firrtl.passes.PassException
-
-import scala.sys.process.{ProcessBuilder, ProcessLogger, _}
-import scala.util.matching._
 
 
 
 object LHS { def apply() : Gender = FEMALE }
 object RHS { def apply() : Gender = MALE }
 
-case class SpecImplAnnotation(target: ComponentName, is_spec: Boolean, other: Option[ComponentName]) extends SingleTargetAnnotation[ComponentName] {
-  def duplicate(n: ComponentName): SpecImplAnnotation = this.copy(target = n)
-}
 
-case class SpecImplPair(m: String, spec_wire: String, impl_wire: String)
+case class SpecImplPair(id: Int, module: String, spec: Conditionally, impl: Conditionally)
 
 class NotEquivalentException(info: Info, msg: String) extends PassException(
   s"$info: $msg"
@@ -67,7 +58,7 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
     (spec_in, spec_out, impl_out)
   }
 
-  private def makeMiter(in: Map[String, Type], spec_out: Map[String, Type], impl_out: Map[String, Type]) : Circuit = {
+  private def makeMiter(spec_name: String, impl_name: String, in: Map[String, Type], spec_out: Map[String, Type], impl_out: Map[String, Type]) : Circuit = {
     val bool_t = UIntType(IntWidth(1))
     val io = WRef("io")
     val io_port = Port(NoInfo, "io", Input, BundleType(in.map { case (name, tpe) => Field(name, Default, tpe) }.toSeq))
@@ -78,8 +69,8 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
       Port(NoInfo, "trigger", Output, bool_t)
     )
     val trigger = WRef("trigger")
-    def specIO(name: String) = WSubField(WSubField(WRef("spec"), "io"), name)
-    def implIO(name: String) = WSubField(WSubField(WRef("impl"), "io"), name)
+    def specIO(name: String) = WSubField(WSubField(WRef(spec_name), "io"), name)
+    def implIO(name: String) = WSubField(WSubField(WRef(impl_name), "io"), name)
     def updateTrigger(expr: Expression) = {
       assert(expr.tpe == bool_t)
       Connect(NoInfo, trigger, DoPrim(PrimOps.Or, Seq(trigger, expr), Seq(), bool_t))
@@ -115,7 +106,7 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
     val triggers = (spec_out.keys.toSet | impl_out.keys.toSet).flatMap(make_trigger)
     val trigger_signal : Expression = triggers.reduce( (a,b) => DoPrim(PrimOps.Or, Seq(a,b), Seq(), bool_t))
     val body = Block(Seq(
-        makeInstance("spec"), makeInstance("impl"),
+        makeInstance(spec_name), makeInstance(impl_name),
         // not triggered by default
         Connect(NoInfo, trigger, trigger_signal),
       ) ++
@@ -177,11 +168,14 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
 
   // inspired by firrtlEquivalenceTest from FirrtlSpec.scala
   def run(prefix: String) = {
-    assert(spec.name == "spec")
-    assert(impl.name == "impl")
+    assert(spec.name.startsWith("spec"))
+    assert(impl.name.startsWith("impl"))
     val (in, spec_out, impl_out) = getIO()
 
-    val miter = makeMiter(in, spec_out, impl_out)
+    val miter = makeMiter(spec.name, impl.name, in, spec_out, impl_out)
+    println(miter.serialize)
+
+
     val res = checker.checkCombinatorial(prefix, miter, "trigger")
     res match {
       case _ : IsEquivalent => {
@@ -211,67 +205,31 @@ class SpecImplCheck extends NamedBlockTransform {
   override def outputForm = form
   override def name = "Spec/Impl Block Verification"
   override def execute(state: CircuitState): CircuitState = {
-    println("SpecImplCheck!")
-    println(blocks)
-
-    /*
-    val annos = state.annotations.collect{ case a: SpecImplAnnotation => a}
-    if(annos.length > 0) {
-      // println("SpecImplCheck pass:")
-      // println(state.circuit.serialize)
-      val mod_index = state.circuit.modules.collect{ case m: firrtl.ir.Module => m}.map{ m => m.name -> m}.toMap
-      val spec_impl_pairs = parseAnnotations(annos)
-      for(sip <- spec_impl_pairs) {
-        verify(mod_index, sip)
-      }
+    val mod_index = state.circuit.modules.collect{ case m: firrtl.ir.Module => m}.map{ m => m.name -> m}.toMap
+    val spec_impl_pairs = pairBlocks()
+    for(sip <- spec_impl_pairs) {
+      verify(mod_index(sip.module), sip)
     }
-
-     */
     state
   }
 
-  def parseAnnotations(annos: Seq[SpecImplAnnotation]) : Seq[SpecImplPair] = {
-    val target_to_anno = annos.map{ a => a.target -> a}.toMap
-    val complete_annos = annos.filter(_.other.isDefined)
-    for(a <- complete_annos) {
-      assert(target_to_anno.get(a.other.get).isDefined, s"couldn't find matching spec/impl block for $a")
-      val other = target_to_anno(a.other.get)
-      assert(other.is_spec != a.is_spec, s"other block does not match $a/$other")
-      assert(other.target.module == a.target.module, s"spec/impl scopes have to be in the same module! $a/$other")
-    }
-    complete_annos.collect {
-      case SpecImplAnnotation(s, true, Some(i)) => SpecImplPair(s.module.name, s.name, i.name)
-      case SpecImplAnnotation(i, false, Some(s)) => SpecImplPair(s.module.name, s.name, i.name)
-    }
-  }
-
-  def findBlock(module: firrtl.ir.Module, wire_name: String) : Statement = {
-    // we need to find the Statement inside the when statement after the spec/impl wire
-    // the idea here is that it has to be in a block!
-    def searchBlock(stmts: Seq[Statement]) : Option[Statement] = {
-      var get_next_conditional = false
-      for(s <- stmts) {
-        if(get_next_conditional) {
-          val when = s.asInstanceOf[Conditionally]
-          //println(s"when.pred: ${when.pred}")
-          //println(s"when.alt: ${when.alt}")
-          return Some(when.conseq)
-        }
-        val is_needle = s match {
-          case DefWire(_, name, _) => name == wire_name
-          case _ => false
-        }
-        get_next_conditional = is_needle
-      }
-      None
-    }
-    def visitStatement(stmt: Statement) : Option[Statement] = {
-      stmt match {
-        case b: Block => searchBlock(b.stmts)
-        case _ => None
-      }
-    }
-    visitStatement(module.body).get
+  private def pairBlocks() : Seq[SpecImplPair] = {
+    // find matching blocks
+    val meta_blocks : Seq[(SpecImplMeta, NamedBlock)] = blocks.map(b => b.meta.get.asInstanceOf[SpecImplMeta] -> b)
+    val id_to_block : Map[Int, Seq[NamedBlock]] = meta_blocks.map{
+      case (SpecImplId(id), b) => id -> b
+      case (SpecImplProblem(id), b) => id -> b
+    }.groupBy(_._1).map(p => p._1 -> p._2.map(_._2))
+    // generate spec impl pairs
+    id_to_block.map { case (id, blocks) =>
+      assert(blocks.length == 2, s"Expected spec/impl pair, got: $blocks")
+      val spec = blocks.filter(_.visible).head
+      assert(spec.name.startsWith(s"spec_$id"), s"Unexpected name: ${spec.name}")
+      val impl = blocks.filter(!_.visible).head
+      assert(impl.name.startsWith(s"impl_$id"), s"Unexpected name: ${impl.name}")
+      assert(spec.module == impl.module, s"Expected spec/impl pair to be in the same module ($spec/$impl)")
+      SpecImplPair(id, spec.module, spec=spec.when, impl=impl.when)
+    }.toSeq
   }
 
   def makeModule(name: String, root: Statement) = {
@@ -353,17 +311,17 @@ class SpecImplCheck extends NamedBlockTransform {
     val clk = Port(NoInfo, "clock", Input, ClockType)
     val rst = Port(NoInfo, "reset", Input, bool_t)
 
-    //println(s"Inputs: $inputs")
-    //println(s"Outputs: $outputs")
+    println(s"Inputs: $inputs")
+    println(s"Outputs: $outputs")
 
     Module(NoInfo, name, Seq(clk, rst, io_port), Block(Seq(output_inits, body)))
   }
 
-  def verify(modules: Map[String, firrtl.ir.Module], pair: SpecImplPair) = {
+
+  def verify(mod: firrtl.ir.Module, pair: SpecImplPair) = {
     // turn spec and impl scopes into modules
-    val mod = modules(pair.m)
-    val spec = makeModule("spec", findBlock(mod, pair.spec_wire))
-    val impl = makeModule("impl", findBlock(mod, pair.impl_wire))
+    val spec = makeModule(s"spec_${pair.id}", pair.spec.conseq)
+    val impl = makeModule(s"impl_${pair.id}", pair.impl.conseq)
 
     // generate verilog from modules
     val backend = new YosysChecker
@@ -371,4 +329,5 @@ class SpecImplCheck extends NamedBlockTransform {
     // TODO: make sure that prefix is unique
     eq.run(mod.name)
   }
+
 }
