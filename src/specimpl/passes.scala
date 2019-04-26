@@ -205,12 +205,16 @@ class EquivalenceChecker(checker: CombinatorialChecker, info: Info, spec: Module
 }
 
 
-class SpecImplCheck extends Transform {
+class SpecImplCheck extends NamedBlockTransform {
   private val form = HighForm
   override def inputForm = form
   override def outputForm = form
   override def name = "Spec/Impl Block Verification"
   override def execute(state: CircuitState): CircuitState = {
+    println("SpecImplCheck!")
+    println(blocks)
+
+    /*
     val annos = state.annotations.collect{ case a: SpecImplAnnotation => a}
     if(annos.length > 0) {
       // println("SpecImplCheck pass:")
@@ -221,6 +225,8 @@ class SpecImplCheck extends Transform {
         verify(mod_index, sip)
       }
     }
+
+     */
     state
   }
 

@@ -11,16 +11,24 @@ import chisel3.internal.sourceinfo.SourceInfo
 import firrtl.annotations.ComponentName
 
 
+object specimpl {
+  private var nextId : Int = 0
+  def getUID() : Int = {
+    val ii = nextId
+    nextId = nextId + 1
+    ii
+  }
+}
+
 object spec {
   def apply(block: => Unit)(implicit sourceInfo: SourceInfo, compileOptions: CompileOptions) = new SpecContext(block)
 }
 
 final class SpecContext(block: => Unit) {
-  named_block("spec", block)
-  //val other = specimpl.make_block(block, is_spec = true)
+  val id = specimpl.getUID()
+  named_block(s"spec_$id", block, meta = Some(SpecImplId(id)))
   def impl(block: => Unit)(implicit sourceInfo: SourceInfo, compileOptions: CompileOptions): Unit = {
-    named_block("impl", block, do_include = false)
-    // specimpl.make_block(block, is_spec = false, other = Some(other))
+    named_block(s"impl_$id", block, do_include = false, meta = Some(SpecImplProblem(id)))
   }
 }
 
@@ -29,13 +37,21 @@ object impl {
 }
 
 final class ImplContext(block: => Unit) {
-  //val other = specimpl.make_block(block, is_spec = false)
-  named_block("impl", block, do_include = false)
+  val id = specimpl.getUID()
+  named_block(s"impl_$id", block, do_include = false, meta = Some(SpecImplId(id)))
   def spec(block: => Unit)(implicit sourceInfo: SourceInfo, compileOptions: CompileOptions): Unit = {
-    named_block("spec", block)
-    //specimpl.make_block(block, is_spec = true, other = Some(other))
+    named_block(s"spec_$id", block, meta = Some(SpecImplProblem(id)))
   }
 }
+
+class SpecImplMeta extends NamedBlockMetaData {
+  def subTransformClass: Class[SpecImplCheck] = classOf[SpecImplCheck]
+}
+
+case class SpecImplId(id: Int) extends SpecImplMeta
+
+// TODO: add any additional information to this struct
+case class SpecImplProblem(id: Int) extends SpecImplMeta
 
 case class SpecImplChiselAnnotation(target: InstanceId, is_spec: Boolean, other: Option[InstanceId])
     extends ChiselAnnotation with RunFirrtlTransform {

@@ -27,8 +27,18 @@ object named_block {
   }
 }
 
+abstract class NamedBlockTransform extends Transform {
+  private var blocks_p : Seq[NamedBlock] = Seq()
+  protected def blocks : Seq[NamedBlock] = blocks_p
+  def run(bbs: Seq[NamedBlock], state: CircuitState): CircuitState = {
+    blocks_p = bbs
+    runTransform(state)
+  }
+}
+
+
 trait NamedBlockMetaData {
-  def subTransformClass: Class[_ <: Transform]
+  def subTransformClass: Class[_ <: NamedBlockTransform]
 }
 
 case class NamedBlockChiselAnnotation(target: InstanceId, meta: Option[NamedBlockMetaData])
@@ -58,13 +68,23 @@ class NamedBlockFinder extends Transform {
        val add_sub_blocks = bi.instances.flatMap(mod_to_block_inst(_)).map(_.block.name)
         bi.block.copy(subBlocks = bi.block.subBlocks ++ add_sub_blocks)
       }}
+
+      // TODO: this is ugly, there has to be a better way to call the next transform...
+      val meta_blocks = blocks.map(b => (b.meta, b)).collect{case (Some(meta), b) => meta.subTransformClass-> b}
+      // collect passes
+      val passes = meta_blocks.map(_._1).toSet
+      for(pass <- passes) {
+        val bbs = meta_blocks.filter(_._1 == pass).map(_._2).toSeq
+        val inst = pass.newInstance()
+        // TODO: support transforms that emit a changed circuit
+        inst.run(bbs, state)
+      }
+
       /*
       for(bb <- blocks) {
-        println(s"${bb.name}: ${bb.subBlocks} ${bb.when.info.serialize}")
+        println(s"${bb.name}(${bb.subBlocks}): ${bb.meta} ${bb.when.info.serialize}")
       }
-      */
-
-
+       */
     }
     state
   }
