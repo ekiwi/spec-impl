@@ -3,11 +3,11 @@
 // released under BSD 2-Clause License
 // author: Kevin Laeufer <laeufer@cs.berkeley.edu>
 // based on Olof Kindgren's implementation in Verilog
-package examples
+
+package serv
 
 import chisel3._
 import chisel3.util._
-import specimpl._
 
 class cmp_io extends Bundle {
   val sel =  Input(UInt(1.W))
@@ -109,12 +109,7 @@ class serv_alu extends Module {
     eq_r := result_eq
   } .otherwise {
     eq_r := 1.U
-
-    spec {
-      when(result_lt_r === 1.U) { // TODO: isn't this guard useless?
-        result_lt_r := 0.U
-      }
-    } .impl {
+    when(result_lt_r === 1.U) { // TODO: isn't this guard useless?
       result_lt_r := 0.U
     }
   }
