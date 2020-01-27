@@ -2,11 +2,12 @@
 // released under BSD 3-Clause License
 // author: Kevin Laeufer <laeufer@cs.berkeley.edu>
 
-import chisel3.experimental.{RawModule, RunFirrtlTransform}
+import chisel3.RawModule
+import chisel3.experimental.RunFirrtlTransform
 import chisel3.internal.firrtl.Circuit
-import firrtl.{ChirrtlForm, CircuitState, LowFirrtlCompiler, MiddleFirrtlCompiler, Parser, Transform}
+import firrtl.{ChirrtlForm, CircuitState, CustomTransformException, LowFirrtlCompiler, MiddleFirrtlCompiler, Parser, Transform}
 import examples._
-import specimpl.{NotEquivalentException}
+import specimpl.NotEquivalentException
 
 object main {
 
@@ -20,7 +21,7 @@ object main {
         check(gen)
         false
       } catch {
-        case e : NotEquivalentException => true
+        case CustomTransformException(e : NotEquivalentException) => true
       }
       assert(got_exception != correct)
     }

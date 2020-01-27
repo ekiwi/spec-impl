@@ -4,10 +4,10 @@
 
 package specimpl
 
-import chisel3.core.{ChiselAnnotation, CompileOptions, RunFirrtlTransform, annotate}
 import chisel3.internal.InstanceId
 import chisel3.internal.sourceinfo.SourceInfo
 import chisel3._
+import chisel3.experimental._
 import firrtl.annotations.{ComponentName, SingleTargetAnnotation}
 import firrtl.ir._
 import firrtl._
