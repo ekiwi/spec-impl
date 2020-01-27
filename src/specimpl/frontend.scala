@@ -5,11 +5,7 @@
 package specimpl
 
 import chisel3._
-import chisel3.core.{ChiselAnnotation, CompileOptions, RunFirrtlTransform, annotate}
-import chisel3.internal.InstanceId
 import chisel3.internal.sourceinfo.SourceInfo
-import firrtl.annotations.ComponentName
-
 
 object specimpl {
   private var nextId : Int = 0
