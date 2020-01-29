@@ -9,9 +9,9 @@ import firrtl._
 import firrtl.ir._
 import firrtl.util.BackendCompilationUtilities
 import firrtl.CompilerUtils.getLoweringTransforms
-import firrtl.transforms.BlackBoxSourceHelper
-
+import firrtl.transforms.{BlackBoxSourceHelper, NoDCEAnnotation}
 import java.io._
+
 import scala.sys.process._
 import scala.util.matching._
 
@@ -36,7 +36,7 @@ class YosysChecker extends CombinatorialChecker with BackendCompilationUtilities
     //println("About to compile the following FIRRTL:")
     //println(circuit.serialize)
     // TODO: preserve annotations somehow ...
-    val state = CircuitState(circuit, HighForm, Seq())
+    val state = CircuitState(circuit, HighForm, Seq(NoDCEAnnotation))
     val verilog = compiler.compileAndEmit(state)
     val file = new PrintWriter(s"${testDir.getAbsolutePath}/${circuit.main}.v")
     file.write(verilog.getEmittedCircuit.value)
