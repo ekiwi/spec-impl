@@ -60,15 +60,19 @@ class NamedBlockFinder extends Transform {
   override def name = "Named Block Finder"
 
   override def execute(state: CircuitState): CircuitState = {
+    // find all NamedBlock annotations
     val annos = state.annotations.collect { case a: NamedBlockAnnotation => a }
     if (annos.nonEmpty) {
+      // find all native firrtl modules (this excludes blackboxed modules)
       val modules = state.circuit.modules.collect{ case m: firrtl.ir.Module => m}
+      // scan modules for named block patterns
       val mod_to_block_inst = modules.map{mod => mod.name -> scanModule(mod, annos)}.toMap
       val blocks = mod_to_block_inst.values.flatten.map{bi => {
        val add_sub_blocks = bi.instances.flatMap(mod_to_block_inst(_)).map(_.block.name)
         bi.block.copy(subBlocks = bi.block.subBlocks ++ add_sub_blocks)
       }}
 
+      // call sub transformation associated with the named blocks
       // TODO: this is ugly, there has to be a better way to call the next transform...
       val meta_blocks = blocks.map(b => (b.meta, b)).collect{case (Some(meta), b) => meta.subTransformClass-> b}
       // collect passes
@@ -90,6 +94,7 @@ class NamedBlockFinder extends Transform {
   }
 
   private def scanModule(mod: firrtl.ir.Module, annos: Seq[NamedBlockAnnotation]) : Seq[BlockInst] = {
+    // find all annotations that refer to this module
     val mod_annos = annos.filter(_.target.module.name == mod.name)
     if(mod_annos.isEmpty) { Seq() } else {
       val wires = mod_annos.map{ a => a.target.name -> a}.toMap
