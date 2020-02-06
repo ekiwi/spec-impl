@@ -22,6 +22,7 @@ object blockToModule {
     def onUse(ref: Expression) : Expression = {
       val name = toName(ref)
       if(!internally_defined.contains(name)) {
+        // println(s"New Input: $name -> $ref (${ref.serialize}")
         inputs += (name -> ref)
         WSubField(WRef("io"), name)
       } else { ref }
@@ -41,7 +42,7 @@ object blockToModule {
         val out = WSubField(WRef("io"), s"${name}_out")
         val en = WSubField(WRef("io"), s"${name}_out_en")
         outputs += (name -> con.loc.tpe)
-        val expr = con.expr.mapExpr(onExpr)
+        val expr = onExpr(con.expr)
         Block(Seq(
           Connect(NoInfo, out, expr), Connect(NoInfo, en, UIntLiteral(1))
         ))
