@@ -16,7 +16,7 @@ object main {
   }
 
   def check_examples() = {
-    for((gen, correct) <- simple_alu.get_examples) {
+    for((gen, correct) <- simple_alu.get_examples ++ max3.get_examples) {
       val got_exception = try {
         check(gen)
         false
